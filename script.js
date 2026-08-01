@@ -20,12 +20,46 @@ const totalEnergy = document.getElementById("totalEnergy");
 const onlineMeters = document.getElementById("onlineMeters");
 const averageVoltage = document.getElementById("averageVoltage");
 const meterCount = document.getElementById("meterCount");
+const chartColors = [
+  "#2578ff", "#7b4cf6", "#f28d2f", "#13b887", "#e45f92",
+  "#16a7d9", "#a269d8", "#d88323", "#2c9e72"
+];
+
+const powerChart = new Chart(document.getElementById("powerChart"), {
+  type: "line",
+  data: {
+    labels: [],
+    datasets: Array.from({ length: 9 }, (_, index) => ({
+      label: `PZEM ${index + 1}`,
+      data: [],
+      borderColor: chartColors[index],
+      backgroundColor: chartColors[index],
+      borderWidth: 2,
+      tension: 0.35,
+      pointRadius: 0,
+      pointHoverRadius: 4
+    }))
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { labels: { boxWidth: 9, boxHeight: 9, usePointStyle: true, pointStyle: "circle", padding: 14 } },
+      tooltip: { callbacks: { label: (context) => `${context.dataset.label}: ${context.parsed.y.toFixed(1)} W` } }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
+      y: { beginAtZero: true, title: { display: true, text: "Power (W)" }, grid: { color: "rgba(101, 115, 136, 0.15)" } }
+    }
+  }
+});
 
 const demoMeters = Object.fromEntries(
   Array.from({ length: 9 }, (_, index) => {
     const number = index + 1;
     return [`pzem_${number}`, {
-      name: `PZEM ${number}`,
+      name: `pzem ${number}`,
       voltage: 0,
       current: 0,
       power: 0,
@@ -44,6 +78,30 @@ function number(value, decimals = 0) {
 
 function displayMeters() {
   return { ...demoMeters, ...liveMeters };
+}
+
+function updatePowerChart() {
+  if (!Object.keys(liveMeters).length) return;
+
+  const label = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+
+  powerChart.data.labels.push(label);
+
+  powerChart.data.datasets.forEach((dataset, index) => {
+    const meter = liveMeters[`pzem_${index + 1}`];
+    dataset.data.push(Number(meter?.power || 0));
+  });
+
+  if (powerChart.data.labels.length > 30) {
+    powerChart.data.labels.shift();
+    powerChart.data.datasets.forEach((dataset) => dataset.data.shift());
+  }
+
+  powerChart.update();
 }
 
 function renderDashboard() {
@@ -97,6 +155,7 @@ firebase.database().ref("meters").on(
   (snapshot) => {
     liveMeters = snapshot.val() || {};
     renderDashboard();
+     updatePowerChart();
     setStatus("System online", "online");
     lastUpdated.textContent = liveMeters && Object.keys(liveMeters).length
       ? `Last synchronised ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`

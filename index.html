@@ -62,6 +62,19 @@
         <span class="summary-caption">Across active meters</span>
       </article>
     </section>
+    
+    <section class="chart-panel" aria-labelledby="chartTitle">
+      <div class="chart-heading">
+        <div>
+          <p class="eyebrow">REAL-TIME POWER</p>
+          <h2 id="chartTitle">Live usage by PZEM</h2>
+        </div>
+        <span class="chart-note">Last 30 updates</span>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="powerChart" aria-label="Live active power graph for PZEM 1 to PZEM 9"></canvas>
+      </div>
+    </section>
 
     <section class="section-heading">
       <div>
@@ -99,6 +112,7 @@
 
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
