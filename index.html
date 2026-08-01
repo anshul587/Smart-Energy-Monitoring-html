@@ -62,7 +62,50 @@
         <span class="summary-caption">Across active meters</span>
       </article>
     </section>
-    
+
+    <section class="bill-panel" aria-labelledby="billTitle">
+      <div class="bill-heading">
+        <div>
+          <p class="eyebrow">ENERGY BILL CALCULATOR</p>
+          <h2 id="billTitle">Estimated bill for all meters</h2>
+          <p>Uses the total energy currently reported by your PZEM meters.</p>
+        </div>
+        <label class="rate-control" for="unitRate">
+          <span>Electricity price per unit (₹/kWh)</span>
+          <select id="unitRate">
+            <option value="" selected disabled>Select your price</option>
+            <option value="4">₹4.00 per unit</option>
+            <option value="5">₹5.00 per unit</option>
+            <option value="6">₹6.00 per unit</option>
+            <option value="7">₹7.00 per unit</option>
+            <option value="8">₹8.00 per unit</option>
+            <option value="10">₹10.00 per unit</option>
+            <option value="12">₹12.00 per unit</option>
+          </select>
+        </label>
+      </div>
+      <div class="bill-summary">
+        <article>
+          <span>Total units consumed</span>
+          <strong id="billTotalUnits">0.00 <small>kWh</small></strong>
+        </article>
+        <article>
+          <span>Estimated electricity cost</span>
+          <strong id="billTotalCost">₹0.00</strong>
+          <small id="billRateText">Select your price per unit</small>
+        </article>
+      </div>
+      <div class="bill-table-wrap">
+        <table class="bill-table">
+          <thead>
+            <tr><th>Meter</th><th>Units (kWh)</th><th>Estimated cost</th></tr>
+          </thead>
+          <tbody id="billMeterRows"></tbody>
+        </table>
+      </div>
+      <p class="bill-note">For a monthly bill, reset PZEM energy at the start of the month or subtract the previous month’s meter reading.</p>
+    </section>
+
     <section class="chart-panel" aria-labelledby="chartTitle">
       <div class="chart-heading">
         <div>
@@ -109,6 +152,20 @@
       </dl>
     </article>
   </template>
+
+  <dialog class="meter-dialog" id="meterDialog">
+    <div class="dialog-header">
+      <div>
+        <p class="eyebrow">30-MINUTE HISTORY</p>
+        <h2 id="dialogMeterName">PZEM history</h2>
+      </div>
+      <button class="icon-button" id="closeDialog" type="button" aria-label="Close graph">×</button>
+    </div>
+    <p class="dialog-note" id="historyMessage">Loading historical data…</p>
+    <div class="dialog-chart-wrap">
+      <canvas id="meterHistoryChart" aria-label="Selected meter power history"></canvas>
+    </div>
+  </dialog>
 
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
