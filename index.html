@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#07172e">
+  <title>Smart Monitoring System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">⌁</div>
+        <div>
+          <p class="eyebrow">ENERGY INTELLIGENCE</p>
+          <h1>Smart Monitoring System</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="connection-pill" id="connectionStatus"><span></span> Connecting</div>
+        <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode">◐</button>
+        <button class="export-button" id="exportButton" type="button">Export CSV</button>
+      </div>
+    </header>
+
+    <section class="hero-panel" aria-labelledby="overviewTitle">
+      <div class="hero-copy">
+        <p class="eyebrow">LIVE OVERVIEW</p>
+        <h2 id="overviewTitle">Your complete energy picture, in one place.</h2>
+        <p class="hero-note" id="lastUpdated">Waiting for live meter data…</p>
+      </div>
+      <div class="hero-wave" aria-hidden="true">
+        <svg viewBox="0 0 500 150" preserveAspectRatio="none">
+          <path d="M0,112 C36,112 40,45 78,45 S117,128 155,128 S192,71 232,71 S276,24 314,24 S351,101 388,101 S426,54 462,54 S480,86 500,86" />
+        </svg>
+      </div>
+    </section>
+
+    <section class="summary-grid" aria-label="Energy summary">
+      <article class="summary-card primary-summary">
+        <span class="summary-label">Total active power</span>
+        <strong id="totalPower">0.0 <small>W</small></strong>
+        <span class="summary-caption" id="totalPowerCaption">Across 9 monitored circuits</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Total energy</span>
+        <strong id="totalEnergy">0.00 <small>kWh</small></strong>
+        <span class="summary-caption">Combined meter readings</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Online meters</span>
+        <strong id="onlineMeters">0 <small>/ 9</small></strong>
+        <span class="summary-caption">Receiving live updates</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Average voltage</span>
+        <strong id="averageVoltage">0.0 <small>V</small></strong>
+        <span class="summary-caption">Across active meters</span>
+      </article>
+    </section>
+
+    <section class="section-heading">
+      <div>
+        <p class="eyebrow">CIRCUIT MONITORING</p>
+        <h2>All PZEM meters</h2>
+      </div>
+      <span class="meter-count" id="meterCount">9 meters</span>
+    </section>
+
+    <section class="meter-grid" id="dashboardContent" aria-live="polite"></section>
+  </main>
+
+  <template id="meterTemplate">
+    <article class="meter-card">
+      <div class="meter-card-header">
+        <div class="meter-title-wrap">
+          <span class="meter-number"></span>
+          <div>
+            <h3 class="meter-name"></h3>
+            <p class="meter-id"></p>
+          </div>
+        </div>
+        <span class="meter-status"><i></i><b></b></span>
+      </div>
+      <div class="meter-power"><strong></strong><span>W</span></div>
+      <div class="power-track"><span></span></div>
+      <dl class="reading-grid">
+        <div><dt>Voltage</dt><dd class="voltage"></dd></div>
+        <div><dt>Current</dt><dd class="current"></dd></div>
+        <div><dt>Energy</dt><dd class="energy"></dd></div>
+        <div><dt>Power factor</dt><dd class="pf"></dd></div>
+      </dl>
+    </article>
+  </template>
+
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
