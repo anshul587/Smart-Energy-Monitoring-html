@@ -171,6 +171,24 @@ body.dark .bill-panel { border-color: var(--line); background: var(--surface); }
 .chart-note { padding: 7px 10px; border-radius: 999px; background: var(--surface-soft); color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .chart-wrap { position: relative; height: 300px; margin-top: 20px; }
 
+.charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: stretch;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.charts-row .chart-panel {
+  margin-bottom: 0;
+}
+
+@media (max-width: 980px) {
+  .charts-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .section-heading { justify-content: space-between; margin: 0 0 16px; }
 .meter-count { padding: 8px 11px; }
 .meter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }

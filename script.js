@@ -11,123 +11,246 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 
 const maxPower = 3000;
-const dashboard = document.getElementById("dashboardContent");
-const meterTemplate = document.getElementById("meterTemplate");
-const connectionStatus = document.getElementById("connectionStatus");
-const lastUpdated = document.getElementById("lastUpdated");
-const totalPower = document.getElementById("totalPower");
-const totalEnergy = document.getElementById("totalEnergy");
-const onlineMeters = document.getElementById("onlineMeters");
-const averageVoltage = document.getElementById("averageVoltage");
-const meterCount = document.getElementById("meterCount");
-const unitRate = document.getElementById("unitRate");
-const billTotalUnits = document.getElementById("billTotalUnits");
-const billTotalCost = document.getElementById("billTotalCost");
-const billRateText = document.getElementById("billRateText");
-const billMeterRows = document.getElementById("billMeterRows");
-const meterDialog = document.getElementById("meterDialog");
-const dialogMeterName = document.getElementById("dialogMeterName");
-const historyMessage = document.getElementById("historyMessage");
-let meterHistoryChart = null;
-const chartColors = [
-  "#2578ff", "#7b4cf6", "#f28d2f", "#13b887", "#e45f92",
-  "#16a7d9", "#a269d8", "#d88323", "#2c9e72"
-];
+const colors = ["#2578ff", "#7b4cf6", "#f28d2f", "#13b887", "#e45f92", "#16a7d9", "#a269d8", "#d88323", "#2c9e72"];
+const $ = (id) => document.getElementById(id);
 
-const powerChart = new Chart(document.getElementById("powerChart"), {
+const dashboard = $("dashboardContent");
+const meterTemplate = $("meterTemplate");
+const unitRate = $("unitRate");
+let metersData = {};
+let powerHistoryMode = false;
+let historyRequestId = 0;
+
+function number(value, decimals = 0) {
+  return Number(value || 0).toFixed(decimals);
+}
+
+function getMeter(number) {
+  return metersData[`pzem_${number}`] || metersData[`pzem${number}`] || {};
+}
+
+function createDatasets() {
+  return Array.from({ length: 9 }, (_, index) => ({
+    label: `PZEM ${index + 1}`,
+    data: [],
+    borderColor: colors[index],
+    backgroundColor: colors[index],
+    borderWidth: 2,
+    tension: 0.35,
+    pointRadius: 0,
+    pointHoverRadius: 4,
+    spanGaps: true
+  }));
+}
+
+/* Add common frequency card, frequency graph and power range selector */
+function createMonitoringUi() {
+  const summaryCardLayout = document.createElement("style");
+
+summaryCardLayout.textContent = `
+  .summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  }
+
+  @media (max-width: 1180px) {
+    .summary-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .summary-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+  }
+
+  @media (max-width: 500px) {
+    .summary-grid {
+      grid-template-columns: 1fr !important;
+    }
+  }
+`;
+
+document.head.appendChild(summaryCardLayout);
+  const card = document.createElement("article");
+  card.className = "summary-card";
+  card.innerHTML = `
+    <span class="summary-label">Common frequency</span>
+    <strong id="commonFrequency">0.00 <small>Hz</small></strong>
+    <span class="summary-caption" id="frequencyCaption">Waiting for live meter data</span>
+  `;
+  document.querySelector(".summary-grid").appendChild(card);
+
+  const powerHeading = document.querySelector(".chart-panel .chart-heading");
+  const oldNote = powerHeading.querySelector(".chart-note");
+
+  const controls = document.createElement("div");
+  controls.style.cssText = "display:flex;align-items:center;gap:8px;flex-wrap:wrap;";
+  controls.innerHTML = `
+    <label style="font-size:11px;font-weight:700;color:var(--muted)">Power data</label>
+    <select id="powerRange" style="padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);font-weight:700">
+      <option value="1d">1 day</option>
+      <option value="1w">1 week</option>
+      <option value="1m">1 month</option>
+    </select>
+  `;
+
+  if (oldNote) controls.appendChild(oldNote);
+  powerHeading.appendChild(controls);
+
+  const frequencyPanel = document.createElement("section");
+  frequencyPanel.className = "chart-panel";
+  frequencyPanel.innerHTML = `
+    <div class="chart-heading">
+      <div>
+        <p class="eyebrow">COMMON FREQUENCY MONITORING</p>
+        <h2>Live common frequency</h2>
+      </div>
+      <span class="chart-note">Latest 100 updates</span>
+    </div>
+    <div class="chart-wrap">
+      <canvas id="frequencyChart"></canvas>
+    </div>
+  `;
+
+ /* Place REAL-TIME POWER and COMMON FREQUENCY MONITORING side-by-side (layout only) */
+  const chartsRow = document.createElement("div");
+  chartsRow.className = "charts-row";
+
+  const powerPanel = document.querySelector(".chart-panel"); // existing "Real-time power" panel, untouched
+  powerPanel.parentNode.insertBefore(chartsRow, powerPanel);
+  chartsRow.appendChild(powerPanel);
+  chartsRow.appendChild(frequencyPanel);
+}
+
+
+createMonitoringUi();
+
+const powerChart = new Chart($("powerChart"), {
+  type: "line",
+  data: { labels: [], datasets: createDatasets() },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { labels: { boxWidth: 9, usePointStyle: true, pointStyle: "circle", padding: 14 } },
+      tooltip: {
+        callbacks: {
+          label: (context) => `${context.dataset.label}: ${Number(context.parsed.y || 0).toFixed(1)} W`
+        }
+      }
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+      y: {
+        beginAtZero: true,
+        min: 0,
+        max: 300,
+        title: { display: true, text: "Power (W)" },
+        ticks: { stepSize: 30 }}
+    }
+  }
+});
+
+const frequencyChart = new Chart($("frequencyChart"), {
   type: "line",
   data: {
     labels: [],
-    datasets: Array.from({ length: 9 }, (_, index) => ({
-      label: `PZEM ${index + 1}`,
+    datasets: [{
+      label: "Common frequency",
       data: [],
-      borderColor: chartColors[index],
-      backgroundColor: chartColors[index],
-      borderWidth: 2,
+      borderColor: "#2578ff",
+      backgroundColor: "rgba(37, 120, 255, .15)",
+      borderWidth: 3,
       tension: 0.35,
-      pointRadius: 0,
-      pointHoverRadius: 4
-    }))
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      fill: true,
+      spanGaps: true
+    }]
   },
   options: {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: "index", intersect: false },
     plugins: {
-      legend: { labels: { boxWidth: 9, boxHeight: 9, usePointStyle: true, pointStyle: "circle", padding: 14 } },
-      tooltip: { callbacks: { label: (context) => `${context.dataset.label}: ${context.parsed.y.toFixed(1)} W` } }
+      legend: { labels: { boxWidth: 9, usePointStyle: true, pointStyle: "circle" } },
+      tooltip: {
+        callbacks: {
+          label: (context) => `Common frequency: ${Number(context.parsed.y || 0).toFixed(2)} Hz`
+        }
+      }
     },
     scales: {
-      x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
-      y: { beginAtZero: true, title: { display: true, text: "Power (W)" }, grid: { color: "rgba(101, 115, 136, 0.15)" } }
+      x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+      y: {
+  min: 40,
+  max: 60,
+  title: {
+    display: true,
+    text: "Frequency (Hz)"
+  },
+  ticks: {
+    stepSize: 2,
+    callback: (value) => `${value} Hz`
+  },
+  grid: {
+    color: "rgba(101, 115, 136, 0.15)"
+  }
+}
     }
   }
 });
 
-const demoMeters = Object.fromEntries(
-  Array.from({ length: 9 }, (_, index) => {
-    const number = index + 1;
-    return [`pzem_${number}`, {
-      name: `PZEM ${number}`,
-      voltage: 0,
-      current: 0,
-      power: 0,
-      energy: 0,
-      pf: 0,
-      demo: true
-    }];
-  })
-);
+function updateFrequency() {
+  const values = [];
 
-let liveMeters = {};
-let currentEntries = [];
-
-function number(value, decimals = 0) {
-  return Number(value || 0).toFixed(decimals);
-}
-
-function displayMeters() {
-  return { ...demoMeters, ...liveMeters };
-}
-
-function formatRupees(value) {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(value);
-}
-
-function updateBillCalculator(entries = currentEntries) {
-  const hasRate = unitRate.value !== "";
-  const rate = hasRate ? Math.max(0, Number(unitRate.value)) : 0;
-  const activeMeters = entries.filter(([, meter]) => !meter.demo);
-  const totalUnits = activeMeters.reduce((total, [, meter]) => total + Number(meter.energy || 0), 0);
-
-  billTotalUnits.innerHTML = `${number(totalUnits, 2)} <small>kWh</small>`;
-  billTotalCost.textContent = hasRate ? formatRupees(totalUnits * rate) : "—";
-  billRateText.textContent = hasRate ? `At ${formatRupees(rate)} per unit` : "Select your price per unit";
-  billMeterRows.replaceChildren();
-
-  if (!activeMeters.length) {
-    const row = document.createElement("tr");
-    row.innerHTML = '<td colspan="3">Waiting for live PZEM energy readings…</td>';
-    billMeterRows.append(row);
-    return;
+  for (let i = 1; i <= 9; i++) {
+    const value = Number(getMeter(i).frequency);
+    if (Number.isFinite(value) && value > 0) values.push(value);
   }
 
-  activeMeters.forEach(([id, meter], index) => {
-    const energy = Number(meter.energy || 0);
-    const row = document.createElement("tr");
-    const meterCost = hasRate ? formatRupees(energy * rate) : "Select price";
-    row.innerHTML = `<td><b>${meter.name || `PZEM ${index + 1}`}</b><small>${id.toUpperCase()}</small></td><td>${number(energy, 2)} kWh</td><td>${meterCost}</td>`;
-    billMeterRows.append(row);
-  });
-}
+  const common = values.length
+    ? values.reduce((sum, value) => sum + value, 0) / values.length
+    : null;
 
-function updatePowerChart() {
-  if (!Object.keys(liveMeters).length) return;
+  $("commonFrequency").innerHTML = `${number(common, 2)} <small>Hz</small>`;
+  $("frequencyCaption").textContent = values.length
+    ? `${values.length} live meters · ${Math.min(...values).toFixed(2)}–${Math.max(...values).toFixed(2)} Hz`
+    : "Waiting for live frequency data";
+
+  const label = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
+
+  frequencyChart.data.labels.push(label);
+  frequencyChart.data.datasets[0].data.push(common);
+
+  if (frequencyChart.data.labels.length > 100) {
+    frequencyChart.data.labels.shift();
+    frequencyChart.data.datasets[0].data.shift();
+  }
+
+  frequencyChart.update();
+}
+function updatePowerYAxis() {
+  const values = powerChart.data.datasets
+    .flatMap((dataset) => dataset.data)
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+
+  const highestPower = values.length ? Math.max(...values) : 0;
+  const axisMaximum = Math.max(300, Math.ceil(highestPower / 300) * 300);
+
+  powerChart.options.scales.y.min = 0;
+  powerChart.options.scales.y.max = axisMaximum;
+  powerChart.options.scales.y.ticks.stepSize = axisMaximum / 10;
+}
+function updateLivePower() {
+  if (powerHistoryMode) return;
 
   const label = new Date().toLocaleTimeString([], {
     hour: "2-digit",
@@ -138,8 +261,7 @@ function updatePowerChart() {
   powerChart.data.labels.push(label);
 
   powerChart.data.datasets.forEach((dataset, index) => {
-    const meter = liveMeters[`pzem_${index + 1}`];
-    dataset.data.push(Number(meter?.power || 0));
+    dataset.data.push(Number(getMeter(index + 1).power || 0));
   });
 
   if (powerChart.data.labels.length > 30) {
@@ -147,84 +269,52 @@ function updatePowerChart() {
     powerChart.data.datasets.forEach((dataset) => dataset.data.shift());
   }
 
+  updatePowerYAxis();
   powerChart.update();
 }
 
-function openMeterHistory(id, meter) {
-  dialogMeterName.textContent = `${meter.name || id} power history`;
-  historyMessage.textContent = "Loading 30-minute readings…";
-  meterDialog.showModal();
+function updateBill(entries) {
+  const rate = Number(unitRate.value || 0);
+  const totalUnits = entries.reduce((sum, [, meter]) => sum + Number(meter.energy || 0), 0);
 
-  firebase.database().ref(`history/${id}`).orderByKey().limitToLast(48).once("value")
-    .then((snapshot) => {
-      const rows = Object.entries(snapshot.val() || {}).sort(([a], [b]) => Number(a) - Number(b));
+  $("billTotalUnits").innerHTML = `${number(totalUnits, 2)} <small>kWh</small>`;
+  $("billTotalCost").textContent = rate
+    ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(totalUnits * rate)
+    : "—";
 
-      if (!rows.length) {
-        historyMessage.textContent = "No stored history yet. The first point appears after the next 30-minute log.";
-        if (meterHistoryChart) {
-          meterHistoryChart.destroy();
-          meterHistoryChart = null;
-        }
-        return;
-      }
+  $("billRateText").textContent = rate ? `At ₹${rate.toFixed(2)} per unit` : "Select your price per unit";
+  $("billMeterRows").replaceChildren();
 
-      historyMessage.textContent = `Showing ${rows.length} stored readings (one point every 30 minutes).`;
-      const labels = rows.map(([timestamp]) => new Date(Number(timestamp) * 1000).toLocaleString([], {
-        day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit"
-      }));
-      const values = rows.map(([, item]) => Number(item.power || 0));
+  entries.forEach(([id, meter]) => {
+    const energy = Number(meter.energy || 0);
+    const row = document.createElement("tr");
 
-      if (meterHistoryChart) meterHistoryChart.destroy();
-      meterHistoryChart = new Chart(document.getElementById("meterHistoryChart"), {
-        type: "line",
-        data: {
-          labels,
-          datasets: [{
-            label: "Active power (W)",
-            data: values,
-            borderColor: "#2578ff",
-            backgroundColor: "rgba(37, 120, 255, .16)",
-            fill: true,
-            borderWidth: 3,
-            tension: .35,
-            pointRadius: 3
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { grid: { display: false }, ticks: { maxTicksLimit: 6 } },
-            y: { beginAtZero: true, title: { display: true, text: "Power (W)" } }
-          }
-        }
-      });
-    })
-    .catch((error) => {
-      console.error(error);
-      historyMessage.textContent = "Unable to load history. Check Firebase Database Rules.";
-    });
+    row.innerHTML = `
+      <td><b>${id.toUpperCase()}</b></td>
+      <td>${number(energy, 2)} kWh</td>
+      <td>${rate ? `₹${number(energy * rate, 2)}` : "Select price"}</td>
+    `;
+
+    $("billMeterRows").appendChild(row);
+  });
 }
 
 function renderDashboard() {
-  const meters = displayMeters();
-  const entries = Object.entries(meters).sort(([a], [b]) =>
-    Number(a.replace("pzem_", "")) - Number(b.replace("pzem_", ""))
-  );
-  currentEntries = entries;
+  const entries = Array.from({ length: 9 }, (_, index) => {
+    const number = index + 1;
+    return [`pzem_${number}`, getMeter(number)];
+  });
 
   dashboard.replaceChildren();
 
   entries.forEach(([id, meter], index) => {
     const card = meterTemplate.content.cloneNode(true);
-    const meterCard = card.querySelector(".meter-card");
-    const isOnline = !meter.demo;
     const power = Number(meter.power || 0);
+    const isOnline = Object.keys(meter).length > 0;
 
     card.querySelector(".meter-number").textContent = String(index + 1).padStart(2, "0");
-    card.querySelector(".meter-name").textContent = meter.name || `PZEM ${index + 1}`;
-    card.querySelector(".meter-id").textContent = id.replace("_", " ").toUpperCase();
+    card.querySelector(".meter-name").textContent = `PZEM ${index + 1}`;
+    card.querySelector(".meter-id").textContent = id.toUpperCase();
     card.querySelector(".meter-power strong").textContent = number(power, 1);
     card.querySelector(".voltage").textContent = `${number(meter.voltage, 1)} V`;
     card.querySelector(".current").textContent = `${number(meter.current, 2)} A`;
@@ -235,75 +325,150 @@ function renderDashboard() {
     const status = card.querySelector(".meter-status");
     status.classList.add(isOnline ? "online" : "offline");
     status.querySelector("b").textContent = isOnline ? "Live" : "Waiting";
-    meterCard.tabIndex = 0;
-    meterCard.setAttribute("role", "button");
-    meterCard.setAttribute("aria-label", `Show ${meter.name || id} history`);
-    meterCard.addEventListener("click", () => openMeterHistory(id, meter));
-    meterCard.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") openMeterHistory(id, meter);
-    });
-    dashboard.append(card);
+
+    dashboard.appendChild(card);
   });
 
-  const online = entries.filter(([, meter]) => !meter.demo);
-  const active = online.length ? online : [];
-  const sum = (key) => active.reduce((total, [, meter]) => total + Number(meter[key] || 0), 0);
-  const average = active.length ? sum("voltage") / active.length : 0;
+  const online = entries.filter(([, meter]) => Object.keys(meter).length > 0);
+  const totalPower = online.reduce((sum, [, meter]) => sum + Number(meter.power || 0), 0);
+  const totalEnergy = online.reduce((sum, [, meter]) => sum + Number(meter.energy || 0), 0);
+  const averageVoltage = online.length
+    ? online.reduce((sum, [, meter]) => sum + Number(meter.voltage || 0), 0) / online.length
+    : 0;
 
-  totalPower.innerHTML = `${number(sum("power"), 1)} <small>W</small>`;
-  totalEnergy.innerHTML = `${number(sum("energy"), 2)} <small>kWh</small>`;
-  onlineMeters.innerHTML = `${online.length} <small>/ 9</small>`;
-  averageVoltage.innerHTML = `${number(average, 1)} <small>V</small>`;
-  meterCount.textContent = `${entries.length} meters`;
-  updateBillCalculator(entries);
+  $("totalPower").innerHTML = `${number(totalPower, 1)} <small>W</small>`;
+  $("totalEnergy").innerHTML = `${number(totalEnergy, 2)} <small>kWh</small>`;
+  $("onlineMeters").innerHTML = `${online.length} <small>/ 9</small>`;
+  $("averageVoltage").innerHTML = `${number(averageVoltage, 1)} <small>V</small>`;
+  $("meterCount").textContent = "9 meters";
+
+  updateBill(online);
 }
 
-function setStatus(text, state) {
-  connectionStatus.className = `connection-pill ${state}`;
-  connectionStatus.innerHTML = `<span></span> ${text}`;
+function timestampMilliseconds(timestamp) {
+  const value = Number(timestamp);
+  return String(timestamp).length > 10 ? value : value * 1000;
 }
 
-firebase.database().ref("meters").on(
-  "value",
-  (snapshot) => {
-    liveMeters = snapshot.val() || {};
-    renderDashboard();
-    updatePowerChart();
-    setStatus("System online", "online");
-    lastUpdated.textContent = liveMeters && Object.keys(liveMeters).length
-      ? `Last synchronised ${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
-      : "Waiting for live PZEM data…";
-  },
-  (error) => {
+async function loadPowerHistory(range) {
+  const note = document.querySelector(".chart-panel .chart-note");
+  const requestId = ++historyRequestId;
+  const hours = { "1d": 24, "1w": 168, "1m": 720 }[range];
+  const start = Math.floor(Date.now() / 1000) - hours * 3600;
+
+  powerHistoryMode = true;
+  note.textContent = "Loading history...";
+
+  try {
+    const snapshots = await Promise.all(
+      Array.from({ length: 9 }, (_, index) =>
+        firebase.database()
+          .ref(`history/pzem_${index + 1}`)
+          .orderByKey()
+          .startAt(String(start))
+          .once("value")
+      )
+    );
+
+    if (requestId !== historyRequestId) return;
+
+    const timeline = new Map();
+
+    snapshots.forEach((snapshot, meterIndex) => {
+      Object.entries(snapshot.val() || {}).forEach(([timestamp, data]) => {
+        const time = timestampMilliseconds(timestamp);
+
+        if (!timeline.has(time)) timeline.set(time, Array(9).fill(null));
+        timeline.get(time)[meterIndex] = Number(data.power ?? data);
+      });
+    });
+
+    const points = [...timeline.entries()].sort(([a], [b]) => a - b);
+
+    if (!points.length) {
+      powerHistoryMode = false;
+      note.textContent = "No stored history — showing live data";
+      return;
+    }
+
+    powerChart.data.labels = points.map(([time]) =>
+      new Date(time).toLocaleString([], {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit"
+      })
+    );
+
+    powerChart.data.datasets.forEach((dataset, index) => {
+      dataset.data = points.map(([, values]) => values[index]);
+    });
+    updatePowerYAxis();
+    powerChart.update();
+
+    note.textContent = `${points.length} readings · ${range === "1d" ? "1 day" : range === "1w" ? "1 week" : "1 month"}`;
+  } catch (error) {
     console.error(error);
-    setStatus("Firebase error", "error");
-    lastUpdated.textContent = "Check Firebase Database Rules and configuration.";
+    powerHistoryMode = false;
+    note.textContent = "History unavailable — showing live data";
   }
-);
+}
 
-document.getElementById("themeToggle").addEventListener("click", () => {
+function useLiveData(data) {
+  metersData = data || {};
+
+  renderDashboard();
+  updateFrequency();
+  updateLivePower();
+
+  $("connectionStatus").className = "connection-pill online";
+  $("connectionStatus").innerHTML = "<span></span> System online";
+  $("lastUpdated").textContent = `Last synchronised ${new Date().toLocaleTimeString()}`;
+}
+
+/* Supports both /meters/pzem_1 and your ESP code /energy/pzem1 */
+firebase.database().ref("meters").on("value", (snapshot) => {
+  if (Object.keys(snapshot.val() || {}).length) useLiveData(snapshot.val());
+});
+
+firebase.database().ref("energy").on("value", (snapshot) => {
+  if (Object.keys(snapshot.val() || {}).length) useLiveData(snapshot.val());
+});
+
+$("powerRange").addEventListener("change", (event) => {
+  loadPowerHistory(event.target.value);
+});
+
+unitRate.addEventListener("change", () => renderDashboard());
+
+$("themeToggle").addEventListener("click", () => {
   document.body.classList.toggle("dark");
 });
 
-unitRate.addEventListener("change", () => updateBillCalculator());
+$("exportButton").addEventListener("click", () => {
+  const rows = [["Meter", "Voltage", "Current", "Power", "Energy", "Frequency", "Power Factor"]];
 
-document.getElementById("closeDialog").addEventListener("click", () => meterDialog.close());
-meterDialog.addEventListener("click", (event) => {
-  if (event.target === meterDialog) meterDialog.close();
-});
+  for (let i = 1; i <= 9; i++) {
+    const meter = getMeter(i);
+    rows.push([
+      `PZEM ${i}`,
+      meter.voltage || 0,
+      meter.current || 0,
+      meter.power || 0,
+      meter.energy || 0,
+      meter.frequency || 0,
+      meter.pf || 0
+    ]);
+  }
 
-document.getElementById("exportButton").addEventListener("click", () => {
-  const rows = [["Meter", "Voltage (V)", "Current (A)", "Power (W)", "Energy (kWh)", "Power Factor"]];
-  Object.entries(displayMeters()).forEach(([id, meter]) => {
-    rows.push([id, meter.voltage || 0, meter.current || 0, meter.power || 0, meter.energy || 0, meter.pf || 0]);
-  });
-
-  const csv = rows.map((row) => row.join(",")).join("\n");
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  link.href = URL.createObjectURL(
+    new Blob([rows.map((row) => row.join(",")).join("\n")], { type: "text/csv" })
+  );
   link.download = "smart-monitoring-readings.csv";
   link.click();
   URL.revokeObjectURL(link.href);
 });
 
 renderDashboard();
+loadPowerHistory("1d");
