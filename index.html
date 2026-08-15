@@ -153,17 +153,71 @@
     </article>
   </template>
 
-  <dialog class="meter-dialog" id="meterDialog">
+  <dialog class="meter-dialog pzem-modal" id="meterDialog">
     <div class="dialog-header">
       <div>
-        <p class="eyebrow">30-MINUTE HISTORY</p>
-        <h2 id="dialogMeterName">PZEM history</h2>
+        <h2 id="dialogMeterName">PZEM 1</h2>
+        <p class="meter-id" id="dialogMeterId">PZEM_1</p>
+        <span class="meter-status" id="modalStatusPill"><i></i><b id="modalStatusText">Online</b></span>
       </div>
-      <button class="icon-button" id="closeDialog" type="button" aria-label="Close graph">×</button>
+      <button class="icon-button" id="closeDialog" type="button" aria-label="Close popup">×</button>
     </div>
-    <p class="dialog-note" id="historyMessage">Loading historical data…</p>
-    <div class="dialog-chart-wrap">
-      <canvas id="meterHistoryChart" aria-label="Selected meter power history"></canvas>
+
+    <div class="pzem-modal-stats" id="modalStats">
+      <div><span>Power</span><strong id="modalPower">0.0 <small>W</small></strong></div>
+      <div><span>Voltage</span><strong id="modalVoltage">0.0 <small>V</small></strong></div>
+      <div><span>Current</span><strong id="modalCurrent">0.00 <small>A</small></strong></div>
+      <div><span>Energy</span><strong id="modalEnergy">0.00 <small>kWh</small></strong></div>
+      <div><span>Power Factor</span><strong id="modalPF">0.00</strong></div>
+    </div>
+
+    <div class="pzem-modal-tabs" role="tablist">
+      <button class="pzem-tab active" data-tab="overview" type="button" role="tab" aria-selected="true">Overview</button>
+      <button class="pzem-tab" data-tab="history" type="button" role="tab" aria-selected="false">Historical Usage</button>
+      <button class="pzem-tab" data-tab="sessions" type="button" role="tab" aria-selected="false">ON/OFF Sessions</button>
+      <button class="pzem-tab" data-tab="alerts" type="button" role="tab" aria-selected="false">Alerts</button>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="overview">
+      <dl class="pzem-overview-grid">
+        <div><dt>PZEM status</dt><dd id="ovPzemStatus">—</dd></div>
+        <div><dt>ESP32 connection</dt><dd id="ovEspStatus">—</dd></div>
+        <div><dt>Last updated</dt><dd id="ovLastUpdated">—</dd></div>
+      </dl>
+      <div class="dialog-chart-wrap small">
+        <canvas id="overviewLiveChart" aria-label="Live power for selected meter"></canvas>
+      </div>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="history" hidden>
+      <div class="pzem-history-controls">
+        <label for="modalHistoryRange">Time range</label>
+        <select id="modalHistoryRange">
+          <option value="1h">1 Hour</option>
+          <option value="6h">6 Hours</option>
+          <option value="12h">12 Hours</option>
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="7d" selected>7 Days</option>
+          <option value="30d">30 Days</option>
+        </select>
+      </div>
+      <p class="dialog-note" id="modalHistoryMessage">Loading historical data…</p>
+      <div class="pzem-history-summary" id="modalHistorySummary"></div>
+      <div class="dialog-chart-wrap">
+        <canvas id="modalHistoryChart" aria-label="Historical power for selected meter"></canvas>
+      </div>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="sessions" hidden>
+      <div class="pzem-current-session" id="modalCurrentSession"></div>
+      <h3 class="pzem-subhead">ON/OFF session history</h3>
+      <div class="pzem-session-list" id="modalSessionList"></div>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="alerts" hidden>
+      <h3 class="pzem-subhead">Alerts</h3>
+      <div class="pzem-alert-list" id="modalAlertList"></div>
     </div>
   </dialog>
 

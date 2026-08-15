@@ -260,3 +260,145 @@ body.dark .meter-card:nth-child(3n) .meter-number { background: #51381e; }
   .summary-grid, .meter-grid { grid-template-columns: 1fr; }
   .summary-card { min-height: 122px; }
 }
+
+/* =========================================================================
+   PZEM DETAIL POPUP (ADD-ON FEATURE) — additive only, existing rules above
+   are untouched. Reuses existing color/spacing/shadow variables and the
+   existing .meter-dialog / .dialog-header / .dialog-chart-wrap base styles.
+   ========================================================================= */
+
+.pzem-modal {
+  width: min(880px, calc(100% - 32px));
+  max-height: min(86vh, 780px);
+  overflow-y: auto;
+}
+
+.pzem-modal .dialog-header .meter-id { margin: 4px 0 8px; }
+.pzem-modal .dialog-header .meter-status { margin-top: 2px; }
+
+.pzem-modal-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+.pzem-modal-stats > div {
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.pzem-modal-stats span { display: block; color: var(--muted); font-size: 11px; font-weight: 600; }
+.pzem-modal-stats strong { display: block; margin-top: 6px; font: 700 19px/1 "Space Grotesk", sans-serif; letter-spacing: -.03em; }
+.pzem-modal-stats strong small { font: 600 11px "DM Sans", sans-serif; }
+
+.pzem-modal-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.pzem-tab {
+  padding: 9px 13px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.pzem-tab:hover { color: var(--ink); }
+.pzem-tab.active { border-color: var(--line); background: var(--surface-soft); color: var(--blue); }
+
+.pzem-tab-panel { padding-top: 18px; }
+
+.pzem-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 18px;
+  margin: 0 0 16px;
+}
+.pzem-overview-grid dt { margin-bottom: 4px; color: var(--muted); font-size: 11px; }
+.pzem-overview-grid dd { margin: 0; font-size: 14px; font-weight: 700; }
+
+.dialog-chart-wrap.small { height: 220px; margin-top: 10px; }
+
+.pzem-history-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.pzem-history-controls label { font-size: 11px; font-weight: 700; color: var(--muted); }
+.pzem-history-controls select {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.pzem-history-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+.pzem-history-summary > div {
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+.pzem-history-summary span { display: block; color: var(--muted); font-size: 11px; font-weight: 600; }
+.pzem-history-summary strong { display: block; margin-top: 6px; font: 700 17px/1 "Space Grotesk", sans-serif; }
+
+.pzem-current-session {
+  padding: 14px 16px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--surface-soft);
+}
+.session-live-pill { font-size: 12px; font-weight: 700; color: var(--green); }
+.session-live-pill.off { color: var(--muted); }
+
+.pzem-subhead { margin: 0 0 10px; font-size: 14px; }
+
+.pzem-session-list { display: grid; gap: 8px; }
+.pzem-session-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.session-date { color: var(--muted); font-size: 11px; font-weight: 700; }
+.session-duration { font-weight: 700; }
+
+.pzem-alert-list { display: grid; gap: 8px; }
+.pzem-alert-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+}
+.alert-icon { font-size: 15px; }
+.alert-body b { display: block; font-size: 13px; }
+.alert-body small { color: var(--muted); font-size: 11px; }
+.alert-time { color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+
+@media (max-width: 620px) {
+  .pzem-modal { padding: 16px; max-height: 90vh; }
+  .pzem-modal-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pzem-overview-grid { grid-template-columns: 1fr; }
+  .pzem-history-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .pzem-session-row, .pzem-alert-item { grid-template-columns: auto 1fr; }
+  .session-duration, .alert-time { grid-column: 2; justify-self: start; }
+}
