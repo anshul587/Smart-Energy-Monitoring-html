@@ -126,6 +126,44 @@ document.head.appendChild(summaryCardLayout);
 
 createMonitoringUi();
 
+/* Rounds a positive value up to a "nice" round number (1/1.2/1.5/2/2.5/3/4/
+   5/6/8/10 x a power of ten) — the standard approach for auto-scaling chart
+   axes so ticks land on clean numbers instead of arbitrary fractions. */
+function niceNumber(value) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  const exponent = Math.floor(Math.log10(value));
+  const magnitude = Math.pow(10, exponent);
+  const fraction = value / magnitude;
+  const niceFractions = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10];
+  const niceFraction = niceFractions.find((candidate) => candidate >= fraction) ?? 10;
+  return niceFraction * magnitude;
+}
+
+/* Computes the power (W) axis max + tick step from the highest value
+   currently on the chart. Genuinely dynamic and unbounded — a 300 W floor
+   for near-zero readings, and no ceiling: 5 kW isn't a hard cap, it just
+   naturally falls out of niceNumber() for typical highs around there, and
+   higher values (6 kW, 8 kW, 10 kW, ...) round up the same way. */
+function computePowerAxisRange(highestPowerWatts) {
+  const safeHighest = Number.isFinite(highestPowerWatts) && highestPowerWatts > 0 ? highestPowerWatts : 0;
+  const max = Math.max(300, niceNumber(safeHighest));
+  const step = niceNumber(max / 5) || max; // aim for ~5 divisions, rounded to a nice step
+  return { max, step };
+}
+
+/* Formats a watts value for axis ticks/tooltips: plain W under 1000, kW
+   (up to 1 decimal place) at or above 1000 — matches how the meter cards
+   and modal already display power, just with the unit made explicit here. */
+function formatPowerLabel(watts) {
+  if (!Number.isFinite(watts)) return "0 W";
+  if (watts >= 1000) {
+    const kw = watts / 1000;
+    const rounded = Math.round(kw * 10) / 10;
+    return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)} kW`;
+  }
+  return `${Math.round(watts)} W`;
+}
+
 const powerChart = new Chart($("powerChart"), {
   type: "line",
   data: { labels: [], datasets: createDatasets() },
@@ -137,7 +175,7 @@ const powerChart = new Chart($("powerChart"), {
       legend: { labels: { boxWidth: 9, usePointStyle: true, pointStyle: "circle", padding: 14 } },
       tooltip: {
         callbacks: {
-          label: (context) => `${context.dataset.label}: ${Number(context.parsed.y || 0).toFixed(1)} W`
+          label: (context) => `${context.dataset.label}: ${formatPowerLabel(Number(context.parsed.y || 0))}`
         }
       }
     },
@@ -147,8 +185,8 @@ const powerChart = new Chart($("powerChart"), {
         beginAtZero: true,
         min: 0,
         max: 300,
-        title: { display: true, text: "Power (W)" },
-        ticks: { stepSize: 30 }}
+        title: { display: true, text: "Power" },
+        ticks: { stepSize: 60, callback: (value) => formatPowerLabel(Number(value)) }}
     }
   }
 });
@@ -243,11 +281,11 @@ function updatePowerYAxis() {
     .filter((value) => Number.isFinite(value) && value >= 0);
 
   const highestPower = values.length ? Math.max(...values) : 0;
-  const axisMaximum = Math.max(300, Math.ceil(highestPower / 300) * 300);
+  const { max, step } = computePowerAxisRange(highestPower);
 
   powerChart.options.scales.y.min = 0;
-  powerChart.options.scales.y.max = axisMaximum;
-  powerChart.options.scales.y.ticks.stepSize = axisMaximum / 10;
+  powerChart.options.scales.y.max = max;
+  powerChart.options.scales.y.ticks.stepSize = step;
 }
 function updateLivePower() {
   if (powerHistoryMode) return;
@@ -567,7 +605,24 @@ loadPowerHistory("1d");
    except the two small hooks already marked above.
    ========================================================================= */
 
-const onPowerThreshold = 5;         // W — power above this counts as "equipment running"
+// Hysteresis band for equipment ON/OFF detection (NOT the same as PZEM
+// online/offline — a PZEM can be online while the equipment it measures is
+// idle). While OFF, power must exceed ON_POWER_THRESHOLD to switch ON; while
+// ON, power must drop below OFF_POWER_THRESHOLD to switch OFF. Power readings
+// between the two thresholds preserve whatever state was already active, so
+// noise around a single cutoff can't cause rapid ON/OFF flapping.
+const ON_POWER_THRESHOLD = 5;        // W — OFF state switches to ON above this
+const OFF_POWER_THRESHOLD = 3;       // W — ON state switches to OFF below this
+
+/* THE single authoritative ON/OFF calculation. Every place in this file that
+   needs to know whether equipment is "on" — the live tracker below, and the
+   Firebase-history reconstruction used for the session-history list — calls
+   this same function with the same two constants above. Nothing else in
+   script.js independently decides ON/OFF from power. */
+function nextEquipmentState(currentIsOn, power) {
+  return currentIsOn ? !(power < OFF_POWER_THRESHOLD) : power > ON_POWER_THRESHOLD;
+}
+
 const alertThresholds = {
   highPower: 2500,                  // W
   highCurrent: 13,                  // A
@@ -583,7 +638,7 @@ let modalHistoryRequestId = 0;
 
 function getRuntimeState(n) {
   if (!meterRuntimeState[n]) {
-    meterRuntimeState[n] = { online: false, isOn: false, sessionStart: null, sessions: [], alerts: [], liveSeries: [], flags: {} };
+    meterRuntimeState[n] = { online: false, isOn: false, sessionStart: null, sessions: [], historicalSessions: [], alerts: [], liveSeries: [], flags: {} };
   }
   return meterRuntimeState[n];
 }
@@ -609,19 +664,33 @@ function trackPzemRuntimeState() {
     state.liveSeries.push({ t: now, power });
     if (state.liveSeries.length > 30) state.liveSeries.shift();
 
-    const isOn = isOnline && power > onPowerThreshold;
-    if (isOn && !state.isOn) {
-      state.sessionStart = now;
-      pushAlert(state, "on", "Equipment Started", "");
-    } else if (!isOn && state.isOn) {
-      if (state.sessionStart) {
-        state.sessions.push({ start: state.sessionStart, end: now });
-        if (state.sessions.length > 60) state.sessions.shift();
+    // Equipment ON/OFF is only re-evaluated while the PZEM is actually
+    // reporting. If the meter drops offline, we don't know the equipment's
+    // real state from a missing/zero reading, so the last known ON/OFF state
+    // is preserved rather than being misread as "OFF". This runs on every
+    // Firebase "meters" update (useLiveData() -> trackPzemRuntimeState()),
+    // for every PZEM 1-9, using the one shared nextEquipmentState() rule.
+    if (isOnline) {
+      const isOn = nextEquipmentState(state.isOn, power);
+
+      if (isOn !== state.isOn) {
+        // Safe debug output: power/on-off state only, never credentials.
+        console.log(`[PZEM ${i} STATE] power=${power.toFixed(1)}W previous=${state.isOn ? "ON" : "OFF"} new=${isOn ? "ON" : "OFF"}`);
       }
-      state.sessionStart = null;
-      pushAlert(state, "off", "Equipment Stopped", "");
+
+      if (isOn && !state.isOn) {
+        state.sessionStart = now;
+        pushAlert(state, "on", "Equipment Started", "");
+      } else if (!isOn && state.isOn) {
+        if (state.sessionStart) {
+          state.sessions.push({ start: state.sessionStart, end: now });
+          if (state.sessions.length > 60) state.sessions.shift();
+        }
+        state.sessionStart = null;
+        pushAlert(state, "off", "Equipment Stopped", "");
+      }
+      state.isOn = isOn;
     }
-    state.isOn = isOn;
 
     if (isOnline && !state.online) pushAlert(state, "info", "PZEM Online", "");
     if (!isOnline && state.online) pushAlert(state, "offline", "PZEM Offline", "Meter stopped reporting");
@@ -737,6 +806,62 @@ function formatDuration(ms) {
   return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
+/* Applies the SAME nextEquipmentState() rule used by trackPzemRuntimeState(),
+   but over an ordered series of {t, power} points instead of one live sample
+   at a time. Used to reconstruct completed ON/OFF sessions from Firebase
+   history/pzem_N, so session history survives a page refresh instead of
+   living only in browser memory. Also returns totalOnMs (sum of ON duration
+   across the series) so the history tab's "Total runtime" stat is derived
+   from the same rule as the sessions themselves. */
+function computeSessionsFromPoints(points) {
+  const sessions = [];
+  let isOn = false;
+  let sessionStart = null;
+  let totalOnMs = 0;
+
+  for (const point of points) {
+    const wasOn = isOn;
+    isOn = nextEquipmentState(isOn, point.power);
+
+    if (isOn && !wasOn) {
+      sessionStart = point.t;
+    } else if (!isOn && wasOn && sessionStart !== null) {
+      sessions.push({ start: sessionStart, end: point.t });
+      totalOnMs += point.t - sessionStart;
+      sessionStart = null;
+    }
+  }
+
+  // Still ON at the end of the window: count elapsed time up to the last
+  // sample, but leave the session itself open (no "end" yet) — the live
+  // in-memory session covers that ongoing period more precisely.
+  if (isOn && sessionStart !== null && points.length) {
+    totalOnMs += points[points.length - 1].t - sessionStart;
+  }
+
+  return { sessions, totalOnMs };
+}
+
+/* Reconstructed history sessions are 5-minute-granularity approximations
+   (history/pzem_N only stores one reading per slot); live sessions come from
+   second-by-second live updates since the page was opened. A live session is
+   skipped as a duplicate only when a historical session's start AND end both
+   land within one history slot (5 min) of it — otherwise both are kept. */
+function mergeSessions(historicalSessions, liveSessions) {
+  const HISTORY_SLOT_MS = 5 * 60 * 1000;
+  const merged = [...historicalSessions];
+
+  liveSessions.forEach((liveSession) => {
+    const isDuplicate = historicalSessions.some((historySession) =>
+      Math.abs(historySession.start - liveSession.start) <= HISTORY_SLOT_MS &&
+      Math.abs(historySession.end - liveSession.end) <= HISTORY_SLOT_MS
+    );
+    if (!isDuplicate) merged.push(liveSession);
+  });
+
+  return merged.sort((a, b) => a.start - b.start);
+}
+
 function renderModalSessions() {
   if (!activeMeterNumber) return;
   const state = getRuntimeState(activeMeterNumber);
@@ -756,12 +881,14 @@ function renderModalSessions() {
   const list = $("modalSessionList");
   list.replaceChildren();
 
-  if (!state.sessions.length) {
-    list.innerHTML = `<p class="dialog-note">No completed sessions recorded yet since this dashboard was opened.</p>`;
+  const combinedSessions = mergeSessions(state.historicalSessions, state.sessions);
+
+  if (!combinedSessions.length) {
+    list.innerHTML = `<p class="dialog-note">No completed sessions found in the selected history range, and none recorded yet since this dashboard was opened.</p>`;
     return;
   }
 
-  [...state.sessions].reverse().forEach((session) => {
+  [...combinedSessions].reverse().forEach((session) => {
     const row = document.createElement("div");
     row.className = "pzem-session-row";
     const dateLabel = new Date(session.start).toLocaleDateString([], { day: "2-digit", month: "short", year: "numeric" });
@@ -850,6 +977,8 @@ async function renderModalHistory(range) {
       chart.update();
       note.textContent = "No stored history for this meter in the selected range.";
       $("modalHistorySummary").replaceChildren();
+      getRuntimeState(meterN).historicalSessions = [];
+      if (meterN === activeMeterNumber) renderModalSessions();
       return;
     }
 
@@ -861,10 +990,15 @@ async function renderModalHistory(range) {
     const peakPower = powers.length ? Math.max(...powers) : 0;
     const avgPower = powers.length ? powers.reduce((sum, value) => sum + value, 0) / powers.length : 0;
 
-    let runtimeMs = 0;
-    for (let i = 1; i < points.length; i++) {
-      if (points[i - 1].power > onPowerThreshold) runtimeMs += points[i].t - points[i - 1].t;
-    }
+    // Reconstructs completed ON/OFF sessions for this range straight from the
+    // stored 5-minute readings, so the session-history list survives a page
+    // refresh instead of only reflecting what happened since this tab was
+    // opened. Also drives "Total runtime" with the same hysteresis rule the
+    // sessions themselves use, rather than a separate single-threshold sum.
+    const { sessions: reconstructedSessions, totalOnMs: runtimeMs } =
+      computeSessionsFromPoints(points);
+    getRuntimeState(meterN).historicalSessions = reconstructedSessions;
+    if (meterN === activeMeterNumber) renderModalSessions();
 
     const liveMeter = getMeter(meterN);
     note.textContent = `${points.length} readings · ${range === "1h" ? "1 hour" : range === "6h" ? "6 hours" : range === "12h" ? "12 hours" : range === "today" ? "today" : range === "yesterday" ? "yesterday" : range === "30d" ? "30 days" : "7 days"}`;
