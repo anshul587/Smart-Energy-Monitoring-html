@@ -1,11 +1,11 @@
 const firebaseConfig = {
-  apiKey: "AIzaSyDtlOe9Qx1ZlnSTDgMezoqUFed_XHjI6yU",
-  authDomain: "energy-monitoring-system-65d79.firebaseapp.com",
-  databaseURL: "https://energy-monitoring-system-65d79-default-rtdb.asia-southeast1.firebasedatabase.app",
-  projectId: "energy-monitoring-system-65d79",
-  storageBucket: "energy-monitoring-system-65d79.firebasestorage.app",
-  messagingSenderId: "78868370157",
-  appId: "1:78868370157:web:d9b2b0bbc65114d7c732e4"
+  apiKey: "AIzaSyDCQJgHdIb5CkGRhAPOI-ynVfHdNFSo6bs",
+  authDomain: "smart-energy-monitoring-5a2a4.firebaseapp.com",
+  databaseURL: "https://smart-energy-monitoring-5a2a4-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "smart-energy-monitoring-5a2a4",
+  storageBucket: "smart-energy-monitoring-5a2a4.firebasestorage.app",
+  messagingSenderId: "275361980378",
+  appId: "1:275361980378:web:c9f9ae5742be617e0aaae3"
 };
 
 firebase.initializeApp(firebaseConfig);
@@ -430,13 +430,46 @@ function useLiveData(data) {
   trackPzemRuntimeState(); /* isolated: powers the new per-meter popup only, does not affect anything above */
 }
 
-/* Supports both /meters/pzem_1 and your ESP code /energy/pzem1 */
-firebase.database().ref("meters").on("value", (snapshot) => {
-  if (Object.keys(snapshot.val() || {}).length) useLiveData(snapshot.val());
+/* Dashboard is read-only: it authenticates anonymously (no password embedded
+   in public JS) purely so RTDB rules requiring "auth != null" allow the read.
+   Write access stays restricted to the ESP32's email/password device user. */
+function showConnectionError(message) {
+  $("connectionStatus").className = "connection-pill error";
+  $("connectionStatus").innerHTML = "<span></span> Connection error";
+  $("lastUpdated").textContent = message;
+}
+
+function attachLiveListener() {
+  /* Supports both /meters/pzem_1 and your ESP code /energy/pzem1 */
+  firebase.database().ref("meters").on(
+    "value",
+    (snapshot) => {
+      if (Object.keys(snapshot.val() || {}).length) useLiveData(snapshot.val());
+    },
+    (error) => {
+      console.error("[DASHBOARD] Firebase read permission denied", error);
+      showConnectionError("Live data blocked by database rules — see console");
+    }
+  );
+
+  firebase.database().ref("energy").on(
+    "value",
+    (snapshot) => {
+      if (Object.keys(snapshot.val() || {}).length) useLiveData(snapshot.val());
+    },
+    (error) => {
+      console.error("[DASHBOARD] Firebase read permission denied", error);
+    }
+  );
+}
+
+firebase.auth().signInAnonymously().catch((error) => {
+  console.error("[DASHBOARD] Firebase Auth error", error.code, error.message);
+  showConnectionError("Sign-in failed — see console");
 });
 
-firebase.database().ref("energy").on("value", (snapshot) => {
-  if (Object.keys(snapshot.val() || {}).length) useLiveData(snapshot.val());
+firebase.auth().onAuthStateChanged((user) => {
+  if (user) attachLiveListener();
 });
 
 $("powerRange").addEventListener("change", (event) => {
