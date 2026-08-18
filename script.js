@@ -292,14 +292,14 @@ const frequencyChart = new Chart($("frequencyChart"), {
     scales: {
       x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
       y: {
-  min: 40,
-  max: 60,
+  min: 48,
+  max: 52,
   title: {
     display: true,
     text: "Frequency (Hz)"
   },
   ticks: {
-    stepSize: 2,
+    stepSize: 1,
     callback: (value) => `${value} Hz`
   },
   grid: {

@@ -87,6 +87,7 @@ h2 { font-size: clamp(21px, 2.6vw, 29px); letter-spacing: -.045em; }
 .connection-pill span, .meter-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--orange); }
 .connection-pill.online span, .meter-status.online i { background: var(--green); box-shadow: 0 0 0 4px rgba(19, 184, 135, .13); }
 .connection-pill.error span, .meter-status.offline i { background: var(--danger); }
+.connection-pill.offline span { background: var(--orange); }
 
 .icon-button, .export-button {
   border: 1px solid var(--line);
