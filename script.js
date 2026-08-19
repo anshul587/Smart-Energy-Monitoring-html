@@ -139,9 +139,13 @@ document.head.appendChild(summaryCardLayout);
   controls.innerHTML = `
     <label style="font-size:11px;font-weight:700;color:var(--muted)">Power data</label>
     <select id="powerRange" style="padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);font-weight:700">
-      <option value="1d">1 day</option>
-      <option value="1w">1 week</option>
-      <option value="1m">1 month</option>
+      <option value="1h">1 Hour</option>
+      <option value="6h">6 Hours</option>
+      <option value="12h">12 Hours</option>
+      <option value="today">Today</option>
+      <option value="yesterday">Yesterday</option>
+      <option value="7d" selected>7 Days</option>
+      <option value="30d">30 Days</option>
     </select>
   `;
 
@@ -189,14 +193,27 @@ function niceNumber(value) {
   return niceFraction * magnitude;
 }
 
+/* Fixed Y-axis buckets so small loads (2 W, 5 W, 8 W, 10 W...) stay
+   readable instead of being squashed near zero on a large fixed axis. The
+   bucket ceiling is chosen from the highest value currently on the chart
+   across ALL PZEM lines — this is still ONE shared axis for every dataset,
+   never a per-line axis. */
+function powerAxisMaxForHighest(highest) {
+  if (highest <= 10) return 20;
+  if (highest <= 50) return 100;
+  if (highest <= 100) return 200;
+  if (highest <= 250) return 500;
+  if (highest <= 500) return 1000;
+  if (highest <= 1000) return 2000;
+  if (highest <= 2000) return 3000;
+  return 5000; // covers >2000-4000 W and 4000 W+ (spec: both bucket to 0-5 kW)
+}
+
 /* Computes the power (W) axis max + tick step from the highest value
-   currently on the chart. Genuinely dynamic and unbounded — a 300 W floor
-   for near-zero readings, and no ceiling: 5 kW isn't a hard cap, it just
-   naturally falls out of niceNumber() for typical highs around there, and
-   higher values (6 kW, 8 kW, 10 kW, ...) round up the same way. */
+   currently on the chart, using the fixed buckets above. */
 function computePowerAxisRange(highestPowerWatts) {
   const safeHighest = Number.isFinite(highestPowerWatts) && highestPowerWatts > 0 ? highestPowerWatts : 0;
-  const max = Math.max(300, niceNumber(safeHighest));
+  const max = powerAxisMaxForHighest(safeHighest);
   const step = niceNumber(max / 5) || max; // aim for ~5 divisions, rounded to a nice step
   return { max, step };
 }
@@ -404,30 +421,103 @@ function updateLivePower() {
   powerChart.update();
 }
 
-function updateBill(entries) {
-  const rate = Number(unitRate.value || 0);
-  const totalUnits = entries.reduce((sum, [, meter]) => sum + Number(meter.energy || 0), 0);
+/* =========================================================================
+   ENERGY BILL CALCULATOR — historical consumption, independent of live
+   online/offline status
+   -------------------------------------------------------------------------
+   The bill must reflect Ending cumulative Energy - Starting cumulative
+   Energy from the stored "history/pzem_N" readings (the same archival path
+   loadPowerHistory()/renderModalHistory() already read), over the last 30
+   days. It must NOT depend on whether a PZEM is currently fresh/online —
+   an offline meter with valid stored history still contributes its
+   historical consumption. billHistoricalData is populated once by
+   loadBillHistoricalData() (and refreshed periodically) and every bill UI
+   render/rate change reads from this cache instead of live meter state. */
+let billHistoricalData = null; // { perMeter: [{id, hasData, consumption}], totalConsumption }
+let billLoadFailed = false;
 
-  $("billTotalUnits").innerHTML = `${number(totalUnits, 2)} <small>kWh</small>`;
-  $("billTotalCost").textContent = rate
-    ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(totalUnits * rate)
+async function loadBillHistoricalData() {
+  const { start, end } = historyRangeToWindow("30d");
+
+  try {
+    const snapshots = await Promise.all(
+      Array.from({ length: 9 }, (_, index) =>
+        firebase.database()
+          .ref(`history/pzem_${index + 1}`)
+          .orderByKey()
+          .startAt(String(Math.floor(start / 1000)))
+          .once("value")
+      )
+    );
+
+    const perMeter = snapshots.map((snapshot, index) => {
+      const id = `pzem_${index + 1}`;
+
+      const points = Object.entries(snapshot.val() || {})
+        .map(([timestamp, data]) => ({
+          t: timestampMilliseconds(timestamp),
+          energy: Number(data && typeof data === "object" ? data.energy : NaN)
+        }))
+        .filter((point) => point.t <= end && Number.isFinite(point.energy))
+        .sort((a, b) => a.t - b.t);
+
+      // Need at least a start AND end cumulative-energy reading in the
+      // window to compute a consumption delta — one lone reading (or none)
+      // is genuinely insufficient, not a real 0.00 kWh.
+      if (points.length < 2) return { id, hasData: false, consumption: 0 };
+
+      const startEnergy = points[0].energy;
+      const endEnergy = points[points.length - 1].energy;
+      let consumption = endEnergy - startEnergy;
+
+      if (consumption < 0) {
+        // A cumulative energy counter should never decrease within the
+        // window unless the meter was reset — clamp rather than show a
+        // negative bill line, but keep it traceable in the console.
+        console.warn(`[BILL DEBUG] PZEM ${index + 1} energy counter decreased (start=${startEnergy}, end=${endEnergy}) — likely a meter reset, clamped to 0`);
+        consumption = 0;
+      }
+
+      return { id, hasData: true, consumption };
+    });
+
+    const totalConsumption = perMeter.reduce((sum, meter) => sum + (meter.hasData ? meter.consumption : 0), 0);
+
+    billHistoricalData = { perMeter, totalConsumption };
+    billLoadFailed = false;
+  } catch (error) {
+    console.error("[BILL DEBUG] Failed to load historical energy for bill calculator", error);
+    billLoadFailed = true;
+  }
+
+  renderBillUI();
+}
+
+/* Shows ONE combined total for the whole monitored system (all PZEM 1-9
+   summed) — not a per-meter breakdown. A per-meter row is intentionally NOT
+   rendered here; this is system-wide billing, not individual PZEM billing. */
+function renderBillUI() {
+  const rate = Number(unitRate.value || 0);
+
+  if (!billHistoricalData) {
+    $("billTotalUnits").innerHTML = billLoadFailed ? "Insufficient historical data" : "Loading… <small>kWh</small>";
+    $("billTotalCost").textContent = "—";
+    $("billRateText").textContent = "Select your price per unit";
+    return;
+  }
+
+  const { perMeter, totalConsumption } = billHistoricalData;
+  const anyMeterHasData = perMeter.some((meter) => meter.hasData);
+
+  $("billTotalUnits").innerHTML = anyMeterHasData
+    ? `${number(totalConsumption, 2)} <small>kWh</small>`
+    : "Insufficient historical data";
+
+  $("billTotalCost").textContent = anyMeterHasData && rate
+    ? new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(totalConsumption * rate)
     : "—";
 
   $("billRateText").textContent = rate ? `At ₹${rate.toFixed(2)} per unit` : "Select your price per unit";
-  $("billMeterRows").replaceChildren();
-
-  entries.forEach(([id, meter]) => {
-    const energy = Number(meter.energy || 0);
-    const row = document.createElement("tr");
-
-    row.innerHTML = `
-      <td><b>${id.toUpperCase()}</b></td>
-      <td>${number(energy, 2)} kWh</td>
-      <td>${rate ? `₹${number(energy * rate, 2)}` : "Select price"}</td>
-    `;
-
-    $("billMeterRows").appendChild(row);
-  });
 }
 
 function renderDashboard() {
@@ -495,8 +585,6 @@ function renderDashboard() {
   lastLiveSummary.freshMeters = online.length;
   lastLiveSummary.power = totalPower;
   lastLiveSummary.voltage = averageVoltage;
-
-  updateBill(online);
 }
 
 function timestampMilliseconds(timestamp) {
@@ -504,11 +592,15 @@ function timestampMilliseconds(timestamp) {
   return String(timestamp).length > 10 ? value : value * 1000;
 }
 
+/* Uses the exact same range interpretation as the PZEM popup's Historical
+   Usage selector (historyRangeToWindow(), defined below) so both selectors
+   behave consistently — same 1h/6h/12h/today/yesterday/7d/30d windows,
+   same Firebase "history/pzem_N" source, just applied to all 9 meters at
+   once instead of one. */
 async function loadPowerHistory(range) {
   const note = document.querySelector(".chart-panel .chart-note");
   const requestId = ++historyRequestId;
-  const hours = { "1d": 24, "1w": 168, "1m": 720 }[range];
-  const start = Math.floor(Date.now() / 1000) - hours * 3600;
+  const { start, end } = historyRangeToWindow(range);
 
   powerHistoryMode = true;
   note.textContent = "Loading history...";
@@ -519,7 +611,7 @@ async function loadPowerHistory(range) {
         firebase.database()
           .ref(`history/pzem_${index + 1}`)
           .orderByKey()
-          .startAt(String(start))
+          .startAt(String(Math.floor(start / 1000)))
           .once("value")
       )
     );
@@ -531,6 +623,7 @@ async function loadPowerHistory(range) {
     snapshots.forEach((snapshot, meterIndex) => {
       Object.entries(snapshot.val() || {}).forEach(([timestamp, data]) => {
         const time = timestampMilliseconds(timestamp);
+        if (time > end) return; // respect the range's end boundary too (e.g. "Yesterday" must exclude today)
 
         if (!timeline.has(time)) timeline.set(time, Array(9).fill(null));
         timeline.get(time)[meterIndex] = normalizePowerWatts(data);
@@ -560,7 +653,15 @@ async function loadPowerHistory(range) {
     updatePowerYAxis();
     powerChart.update();
 
-    note.textContent = `${points.length} readings · ${range === "1d" ? "1 day" : range === "1w" ? "1 week" : "1 month"}`;
+    const rangeLabel = range === "1h" ? "1 hour"
+      : range === "6h" ? "6 hours"
+      : range === "12h" ? "12 hours"
+      : range === "today" ? "today"
+      : range === "yesterday" ? "yesterday"
+      : range === "30d" ? "30 days"
+      : "7 days";
+
+    note.textContent = `${points.length} readings · ${rangeLabel}`;
   } catch (error) {
     console.error(error);
     powerHistoryMode = false;
@@ -628,7 +729,7 @@ $("powerRange").addEventListener("change", (event) => {
   loadPowerHistory(event.target.value);
 });
 
-unitRate.addEventListener("change", () => renderDashboard());
+unitRate.addEventListener("change", () => renderBillUI());
 
 $("themeToggle").addEventListener("click", () => {
   document.body.classList.toggle("dark");
@@ -708,7 +809,15 @@ $("exportButton").addEventListener("click", async () => {
 
 
 renderDashboard();
-loadPowerHistory("1d");
+loadPowerHistory("7d");
+loadBillHistoricalData();
+
+/* Refresh the bill's historical consumption on the same cadence new
+   "history/pzem_N" rows actually arrive (HISTORY_SLOT_MS = 5 min), so the
+   bill stays current without needing a page reload. Independent of the 5 s
+   freshness-recheck timer below, which only re-evaluates live/offline
+   status and does not touch bill data. */
+setInterval(loadBillHistoricalData, HISTORY_SLOT_MS);
 
 /* =========================================================================
    PZEM DETAIL POPUP (ADD-ON FEATURE)
