@@ -66,6 +66,44 @@ function isMeterFresh(meter) {
   return age !== null && age <= FRESHNESS_TIMEOUT_MS;
 }
 
+/* =========================================================================
+   TWO-STATUS CARD LOGIC (Communication / AC Supply)
+   -------------------------------------------------------------------------
+   Communication reuses isMeterFresh() above — already the single
+   authoritative, timeout-based LIVE/OFF signal used everywhere else in this
+   file (cards, summary totals, charts). It is not re-derived from a raw
+   "communicationOnline" flag: a boolean written once by the firmware would
+   itself go stale the moment a PZEM actually drops off, which is exactly
+   the bug the timestamp/lastSeen freshness check was built to avoid.
+
+   AC supply is read from meter.acSupplyOn — the field name given in the
+   brief. It's read independently of Communication: CONNECTED + AC OFF is a
+   normal, valid combination and must never be shown as OFFLINE. Only when
+   Communication itself is OFFLINE does AC fall back to UNKNOWN, since a
+   stale reading's last AC value can no longer be trusted as current.
+
+   (A separate "Load" status/meter.loadOn was previously also shown here but
+   has been removed from the UI — AC Supply alone is sufficient for the
+   dashboard's ON/OFF indication. This does not touch meter.loadOn in
+   Firebase; the field, if the firmware writes it, is simply no longer read
+   or displayed here.)
+
+   If a PZEM's Firebase object simply doesn't have acSupplyOn yet (firmware
+   not sending it), tristate() returns null and the card shows UNKNOWN
+   rather than guessing true/false. */
+function tristate(value) {
+  if (value === true || value === 1 || value === "1" || value === "true") return true;
+  if (value === false || value === 0 || value === "0" || value === "false") return false;
+  return null; // undefined/null/"" or anything else unrecognized
+}
+
+/* Returns { communication: bool, ac: true|false|null } */
+function getThreeStatus(meter) {
+  const communication = isMeterFresh(meter);
+  if (!communication) return { communication, ac: null };
+  return { communication, ac: tristate(meter.acSupplyOn) };
+}
+
 // Cache of the last computed live-summary values, written by renderDashboard()
 // and read by updateFrequency() (which always runs immediately afterward) to
 // print one combined [LIVE SUMMARY] diagnostic line per update.
@@ -549,18 +587,27 @@ function renderDashboard() {
     if (freqCell) freqCell.textContent = isLive ? `${number(meter.frequency, 1)} Hz` : "0.00 Hz";
     card.querySelector(".power-track span").style.width = `${isLive ? Math.min((power / maxPower) * 100, 100) : 0}%`;
 
-    const status = card.querySelector(".meter-status");
-    status.classList.add(isLive ? "online" : "offline");
-    status.querySelector("b").textContent = isLive ? "LIVE" : "OFF";
+    // Two independent status pills — Communication and AC Supply. Each
+    // PZEM's own meter object drives its own pills only; nothing here
+    // reads or is influenced by any other PZEM's data.
+    const { communication, ac } = getThreeStatus(meter);
+
+    const commStatus = card.querySelector(".comm-status");
+    commStatus.classList.add(communication ? "online" : "offline");
+    commStatus.querySelector("b").textContent = communication ? "CONNECTED" : "OFFLINE";
+
+    const acStatus = card.querySelector(".ac-status");
+    acStatus.classList.add(ac === true ? "online" : ac === false ? "off" : "unknown");
+    acStatus.querySelector("b").textContent = ac === true ? "AC ON" : ac === false ? "AC OFF" : "UNKNOWN";
 
     card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* enables click-to-open popup */
 
     dashboard.appendChild(card);
 
-    // Temporary safe diagnostics: freshness age + resulting status only,
-    // never any credentials/tokens.
+    // Temporary safe diagnostics: freshness age + resulting status result
+    // only, never any credentials/tokens.
     const age = meterAgeMs(meter);
-    console.log(`[DASHBOARD FRESHNESS] PZEM ${index + 1} age=${age === null ? "n/a" : age + "ms"} status=${isLive ? "LIVE" : "OFF"}`);
+    console.log(`[DASHBOARD FRESHNESS] PZEM ${index + 1} age=${age === null ? "n/a" : age + "ms"} communication=${communication ? "CONNECTED" : "OFFLINE"} ac=${ac === true ? "ON" : ac === false ? "OFF" : "UNKNOWN"}`);
   });
 
   // Every summary widget below is derived ONLY from `online` (fresh)
@@ -983,15 +1030,15 @@ function renderModalOverview() {
   $("modalEnergy").innerHTML = isLive ? `${number(meter.energy, 2)} <small>kWh</small>` : `0.00 <small>kWh</small>`;
   $("modalPF").textContent = isLive ? number(meter.pf, 2) : "0.00";
 
+  const { communication, ac } = getThreeStatus(meter);
+
   const statusPill = $("modalStatusPill");
   statusPill.classList.remove("online", "offline");
-  statusPill.classList.add(isLive ? "online" : "offline");
-  $("modalStatusText").textContent = isLive ? "LIVE" : "OFF";
+  statusPill.classList.add(communication ? "online" : "offline");
+  $("modalStatusText").textContent = communication ? "CONNECTED" : "OFFLINE";
 
-  $("ovPzemStatus").textContent = isLive ? "LIVE" : "OFF — no fresh reading";
-  const espOnline = $("connectionStatus").classList.contains("online");
-  $("ovEspStatus").textContent = espOnline ? "Connected" : "Disconnected";
-  $("ovLastUpdated").textContent = $("lastUpdated").textContent.replace("Last synchronised ", "") || "—";
+  $("ovPzemStatus").textContent = communication ? "CONNECTED" : "OFFLINE";
+  $("ovAcStatus").textContent = ac === true ? "AC ON" : ac === false ? "AC OFF" : "UNKNOWN";
 
   updateOverviewChartData();
 }

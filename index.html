@@ -132,7 +132,10 @@
             <p class="meter-id"></p>
           </div>
         </div>
-        <span class="meter-status"><i></i><b></b></span>
+      </div>
+      <div class="meter-status-group">
+        <span class="meter-status comm-status"><i></i><b></b></span>
+        <span class="meter-status ac-status"><i></i><b></b></span>
       </div>
       <div class="meter-power"><strong></strong><span>W</span></div>
       <div class="power-track"><span></span></div>
@@ -173,9 +176,8 @@
 
     <div class="pzem-tab-panel" data-panel="overview">
       <dl class="pzem-overview-grid">
-        <div><dt>PZEM status</dt><dd id="ovPzemStatus">—</dd></div>
-        <div><dt>ESP32 connection</dt><dd id="ovEspStatus">—</dd></div>
-        <div><dt>Last updated</dt><dd id="ovLastUpdated">—</dd></div>
+        <div><dt>Communication</dt><dd id="ovPzemStatus">—</dd></div>
+        <div><dt>AC supply</dt><dd id="ovAcStatus">—</dd></div>
       </dl>
       <div class="dialog-chart-wrap small">
         <canvas id="overviewLiveChart" aria-label="Live power for selected meter"></canvas>

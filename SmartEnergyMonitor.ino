@@ -76,7 +76,18 @@ void selectPzemMux(uint8_t channel) {
   digitalWrite(MUX_S1, (channel >> 1) & 0x01);
   digitalWrite(MUX_S2, (channel >> 2) & 0x01);
   digitalWrite(MUX_S3, (channel >> 3) & 0x01);
-  delayMicroseconds(50); // CD74HC4067 channel-select propagation margin
+  delayMicroseconds(MUX_SETTLE_US); // CD74HC4067 channel-select propagation margin
+}
+
+// Discards any UART bytes still sitting in the RX buffer from the previously
+// selected PZEM. Must run BEFORE the mux channel is switched: switching first
+// and flushing after risks discarding the first byte(s) of the new PZEM's
+// reply if it starts arriving during the flush call. Bytes at this point are
+// guaranteed to belong to the meter that was selected until now, since only
+// one meter can be electrically connected to ESP32_RX_PIN at a time and the
+// previous read (library call or raw probe) has already returned.
+void flushStalePzemRx() {
+  while (Serial2.available()) Serial2.read();
 }
 
 bool jsonWhitespace(char value) {
@@ -301,8 +312,10 @@ void diagnosePzemFailure(uint8_t address) {
 }
 
 void readMeter(uint8_t i) {
-  selectPzemMux(i); // route this PZEM's TX to ESP32_RX_PIN before any UART transaction for it
-  Serial.printf("[POLL] PZEM %u\n", ADDRESS[i]);
+  flushStalePzemRx();  // step 1-2: previous transaction is done; drop anything still in the RX buffer
+  selectPzemMux(i);    // step 3-4: route this PZEM's TX to ESP32_RX_PIN and let the mux settle
+  Serial.printf("[MUX] C%u -> PZEM%u\n", i, ADDRESS[i]);
+  Serial.printf("[PZEM%u] REQUEST\n", ADDRESS[i]);
   Reading next;
   next.voltage = pzems[i].voltage();
   next.current = pzems[i].current();
@@ -314,10 +327,11 @@ void readMeter(uint8_t i) {
   if (next.valid) {
     next.seenAt = validClock() ? time(nullptr) : 0;
     readings[i] = next;
-    Serial.printf("[PZEM %u] OK V=%.1f I=%.2f P=%.1f E=%.3f F=%.1f PF=%.2f\n", ADDRESS[i], next.voltage, next.current, next.power, next.energy, next.frequency, next.pf);
+    Serial.printf("[PZEM%u] OK V=%.1f I=%.2f P=%.1f E=%.3f F=%.1f PF=%.2f\n", ADDRESS[i], next.voltage, next.current, next.power, next.energy, next.frequency, next.pf);
   } else {
     readings[i].valid = false;
-    Serial.printf("[PZEM %u] Library read failed; running one bounded raw diagnostic.\n", ADDRESS[i]);
+    Serial.printf("[PZEM%u] TIMEOUT\n", ADDRESS[i]);
+    Serial.printf("[PZEM%u] COMMUNICATION FAILED\n", ADDRESS[i]);
     diagnosePzemFailure(ADDRESS[i]); // mux channel from selectPzemMux(i) above is still selected here
   }
 }
@@ -334,7 +348,8 @@ void pollMeters(uint32_t now) {
     if (readings[i].valid) ++valid;
   }
   const uint32_t cycleMs = millis() - cycleStart;
-  Serial.printf("[POLL] Cycle complete: %u/%u valid (%lu ms)\n", valid, attempted, (unsigned long)cycleMs);
+  Serial.printf("[POLL] %u-PZEM cycle complete (%u/%u valid)\n", attempted, valid, attempted);
+  Serial.printf("[POLL] Cycle time = %lu ms\n", (unsigned long)cycleMs);
   if (cycleMs >= LIVE_UPLOAD_INTERVAL_MS) {
     Serial.println("[POLL] WARNING: cycle time reached the live-upload interval; Wi-Fi/Firebase servicing may be delayed. Consider raising LIVE_UPLOAD_INTERVAL_MS or investigating slow/unresponsive addresses.");
   }

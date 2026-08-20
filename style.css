@@ -89,6 +89,16 @@ h2 { font-size: clamp(21px, 2.6vw, 29px); letter-spacing: -.045em; }
 .connection-pill.error span, .meter-status.offline i { background: var(--danger); }
 .connection-pill.offline span { background: var(--orange); }
 
+/* Two-status PZEM cards: communication (online/offline) and AC supply each
+   render as their own pill. "off" (AC OFF) is a normal, expected state —
+   not a fault — so it gets a neutral grey dot, distinct from the red
+   "offline" (communication lost) state. "unknown" covers the AC field when
+   the firmware hasn't reported it yet. */
+.meter-status-group { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.meter-status.off i { background: var(--muted); }
+.meter-status.unknown i { background: var(--line); }
+.meter-status.unknown { color: var(--muted); border-style: dashed; }
+
 .icon-button, .export-button {
   border: 1px solid var(--line);
   background: var(--surface);
@@ -317,7 +327,7 @@ body.dark .meter-card:nth-child(3n) .meter-number { background: #51381e; }
 
 .pzem-overview-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 18px;
   margin: 0 0 16px;
 }
