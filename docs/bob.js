@@ -4,9 +4,9 @@
 (function () {
   "use strict";
 
-  // Backend base URL. Defaults to the local REST API; override with
+  // Backend base URL. Defaults to the public Render API; override with
   // window.BOB_API_BASE if the API is served elsewhere / same-origin.
-  var API_BASE = window.BOB_API_BASE || "http://127.0.0.1:8000";
+  var API_BASE = window.BOB_API_BASE || "https://smart-energy-monitoring-html.onrender.com";
 
   var fab = document.getElementById("bobFab");
   var panel = document.getElementById("bobPanel");
