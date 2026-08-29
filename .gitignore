@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+
+# Frontend Firebase config
+Dashboard Smart-Monitoring-System/firebase-config.js
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+.pytest_cache/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+
+# Browser / MCP artifacts
+.playwright-mcp/
+
+# Temporary files
+*.log
+*.err
+
+# Python cache/data
+*.parquet

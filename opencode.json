@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "@dietrichgebert/ponytail"
+  ],
+  "provider": {
+    "omniroute": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OmniRoute",
+      "options": {
+        "baseURL": "http://localhost:20128/v1"
+      },
+      "models": {
+        "auto/coding": {
+          "name": "OmniRoute Auto Coding"
+        }
+      }
+    }
+  }
+}

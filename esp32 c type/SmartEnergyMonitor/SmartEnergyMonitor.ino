@@ -1,0 +1,988 @@
+/*
+  Smart Energy Monitor — ESP32 DevKit V1 / PZEM-004T V4
+  Dashboard contract: /meters/pzem_N and /history/pzem_N/<unix-seconds>.
+
+  HARDWARE EVIDENCE: this PZEM at address 7 works through a USB-to-TTL adapter
+  but produces no valid UART bytes when wired directly to GPIO16/17. That
+  isolates the fault to the ESP32/PZEM logic-level interface, not the PZEM,
+  its address, this library, or its measurement side. Firmware cannot correct
+  a voltage-level mismatch. Use a validated bidirectional level shifter.
+
+  IMPORTANT: do not use the proposed diode-OR PZEM-TX-to-ESP32-RX bus. Its
+  direction blocks UART LOW/start bits and it does not solve voltage-level
+  compatibility. Do not directly parallel multiple push-pull PZEM TX lines.
+
+  MUX UPDATE: GPIO16 (ESP32 RX2) is now fed by a CD74HC4067 analog mux SIG
+  output instead of being wired to all 9 PZEM TX lines directly. Only one
+  PZEM's TX reaches the ESP32 at a time; selectPzemMux() picks which one
+  before each read. GPIO17 (ESP32 TX2) is unchanged and still fans out to
+  all 9 PZEM RX pins, since the PZEM library addresses requests per-unit and
+  only the addressed PZEM replies.
+*/
+
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <WiFiManager.h>
+#include <PZEM004Tv30.h>
+#include <time.h>
+#include "config.h"
+
+struct Reading {
+  bool valid = false;
+  float voltage = NAN, current = NAN, power = NAN, energy = NAN;
+  float frequency = NAN, pf = NAN;
+  time_t seenAt = 0;
+};
+
+enum AuthState : uint8_t { AUTH_IDLE, AUTH_PENDING, AUTH_READY };
+// Defined before all functions so Arduino IDE prototype generation can never
+// emit a declaration that references an unknown return type.
+enum PzemRawResult : uint8_t { PZEM_RAW_NO_BYTES, PZEM_RAW_INVALID_FRAME, PZEM_RAW_UNEXPECTED_FORMAT, PZEM_RAW_VALID };
+enum AlarmCause : uint8_t { ALARM_CAUSE_NONE, ALARM_CAUSE_HIGH_VOLTAGE, ALARM_CAUSE_LOW_VOLTAGE };
+
+// Structured alert types written to Firebase under /alerts/pzem_N/<unix-ts>.
+// Kept separate from AlarmCause (which drives the local buzzer/LED) — both
+// run in parallel and serve different purposes: AlarmCause is a single
+// shared "any meter is in trouble" trigger; AlertType is per-meter, per-
+// fault-kind, edge-detected, and persisted to RTDB for the dashboard.
+enum AlertType : uint8_t {
+  ALERT_TYPE_NONE = 0,
+  ALERT_TYPE_OVERVOLTAGE,
+  ALERT_TYPE_UNDERVOLTAGE,
+  ALERT_TYPE_COMM_FAILURE,
+  ALERT_TYPE_OVERCURRENT,
+  ALERT_TYPE_POWER_FACTOR_DROP,
+  ALERT_TYPE_FREQUENCY_DEVIATION,
+  ALERT_TYPE_HIGH_POWER,
+  ALERT_TYPE_COMM_DEGRADED
+};
+
+// One slot per (meter, alert type). `active` is the edge-detected state:
+//   true  = condition is currently true for this meter (do NOT re-fire)
+//   false = condition is not currently true (a fresh edge can fire again)
+// After a fire, `active` stays true for as long as the condition persists,
+// and is only cleared when the condition clears — same debounce shape as
+// the existing alarmConditionPrev used by checkVoltageAlarm(). No timing
+// window is needed here because the firmware already polls on a fixed
+// 2.5 s cadence and reads are not noisy in the same way a sensor GPIO is.
+struct AlertSlot {
+  bool active = false;
+};
+
+WiFiManager wifiManager;
+PZEM004Tv30 pzems[PZEM_COUNT];
+Reading readings[PZEM_COUNT];
+
+AuthState authState = AUTH_IDLE;
+String idToken, refreshToken;
+time_t tokenExpiresAt = 0;
+uint32_t authRetryMs = AUTH_INITIAL_RETRY_MS;
+uint32_t lastAuthAttemptMs = 0, lastPollMs = 0, lastLiveUploadMs = 0;
+uint32_t lastWiFiRetryMs = 0, lastCleanupMs = 0;
+time_t lastHistorySlot = 0;
+bool portalRunning = false;
+
+// Emergency voltage alarm state. Fully independent of PZEM/MUX/Firebase/
+// Wi-Fi state - see checkVoltageAlarm()/serviceAlarmOutputs() below.
+bool alarmActive = false;
+uint32_t alarmStartMs = 0;
+AlarmCause alarmCause = ALARM_CAUSE_NONE;
+// True only when the most recent poll cycle found a valid, out-of-limit
+// reading. Used purely as an edge detector so a continuously abnormal
+// voltage does not restart the alarm every cycle (Section 10): a new event
+// can start only after this drops back to false (condition returned to
+// normal) and then becomes true again.
+bool alarmConditionPrev = false;
+bool buzzerOn = false;
+uint32_t buzzerToggleMs = 0;
+bool ledOn = false;
+uint32_t ledToggleMs = 0;
+
+// Per-meter alert state for the 8 structured alert kinds.
+ // alertState[meter][type] — `type` is one of the AlertType enum values
+ // (1..8), used as a compact array index. The slot count matches the number
+ // of meaningful alert kinds (we skip ALERT_TYPE_NONE = 0).
+ #define ALERT_KIND_COUNT 8  // OVERVOLTAGE, UNDERVOLTAGE, COMM_FAILURE, OVERCURRENT, POWER_FACTOR_DROP, FREQUENCY_DEVIATION, HIGH_POWER, COMM_DEGRADED
+AlertSlot alertState[PZEM_COUNT][ALERT_KIND_COUNT];
+
+// Lightweight ring buffer of alerts waiting to be PATCHed to RTDB.
+// uploadAlerts() drains it once per loop iteration; the buffer is sized to
+// absorb one alert per meter per kind in a single cycle (9 * 3 = 27 max),
+// plus headroom for a transient burst.
+#define ALERT_BUFFER_SIZE 32
+struct PendingAlert {
+  uint8_t address;        // PZEM address (1..9)
+  AlertType type;
+  time_t timestamp;       // unix seconds, 0 if clock not synced
+  float value;            // voltage that caused over/undervoltage; 0 for comm
+  uint16_t consecutiveFails; // comm-failure run length in poll cycles
+};
+PendingAlert alertBuffer[ALERT_BUFFER_SIZE];
+uint8_t alertBufferHead = 0;
+uint8_t alertBufferTail = 0;
+uint32_t lastAlertUploadMs = 0;
+uint16_t commFailStreak[PZEM_COUNT] = {0}; // how many cycles this meter has been invalid
+uint8_t validCountThisCycle[PZEM_COUNT] = {0}; // how many valid readings this meter has this cycle
+
+const uint8_t ADDRESS[PZEM_COUNT] = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+
+bool elapsed(uint32_t now, uint32_t then, uint32_t period) {
+  return (uint32_t)(now - then) >= period;
+}
+
+bool validClock() { return time(nullptr) >= 1700000000; }
+
+bool selected(uint8_t index) {
+  return !PZEM_TEST_MODE || ADDRESS[index] == PZEM_TEST_ADDRESS;
+}
+
+// Selects which PZEM's TX line reaches ESP32_RX_PIN through the CD74HC4067.
+// channel maps 1:1 to PZEM array index i (index 0 -> mux C0 -> PZEM1, ...,
+// index 8 -> mux C8 -> PZEM9), matching the physical wiring. EN is tied to
+// GND in hardware and is not driven here. A short settle delay is included
+// because the mux is switched immediately before a request/response UART
+// transaction, not during one.
+void selectPzemMux(uint8_t channel) {
+  digitalWrite(MUX_S0, channel & 0x01);
+  digitalWrite(MUX_S1, (channel >> 1) & 0x01);
+  digitalWrite(MUX_S2, (channel >> 2) & 0x01);
+  digitalWrite(MUX_S3, (channel >> 3) & 0x01);
+  delayMicroseconds(MUX_SETTLE_US); // CD74HC4067 channel-select propagation margin
+}
+
+// Discards any UART bytes still sitting in the RX buffer from the previously
+// selected PZEM. Must run BEFORE the mux channel is switched: switching first
+// and flushing after risks discarding the first byte(s) of the new PZEM's
+// reply if it starts arriving during the flush call. Bytes at this point are
+// guaranteed to belong to the meter that was selected until now, since only
+// one meter can be electrically connected to ESP32_RX_PIN at a time and the
+// previous read (library call or raw probe) has already returned.
+void flushStalePzemRx() {
+  while (Serial2.available()) Serial2.read();
+}
+
+bool jsonWhitespace(char value) {
+  return value == ' ' || value == '\t' || value == '\r' || value == '\n';
+}
+
+// Locates the first value character after a JSON object's named field. This
+// intentionally tolerates whitespace around the colon without logging JSON.
+int jsonValueStart(const String &json, const char *key) {
+  const String field = String("\"") + key + "\"";
+  const int fieldAt = json.indexOf(field);
+  if (fieldAt < 0) return -1;
+  int cursor = json.indexOf(':', fieldAt + field.length());
+  if (cursor < 0) return -1;
+  while (++cursor < (int)json.length() && jsonWhitespace(json[cursor])) {}
+  return cursor < (int)json.length() ? cursor : -1;
+}
+
+String jsonStringField(const String &json, const char *key) {
+  const int start = jsonValueStart(json, key);
+  if (start < 0 || json[start] != '"') return "";
+  const int end = json.indexOf('"', start + 1);
+  return end < 0 ? "" : json.substring(start + 1, end);
+}
+
+// Firebase can return expiry fields either as JSON numbers or quoted numeric
+// strings. Both forms, with optional whitespace, are accepted.
+long jsonNumberField(const String &json, const char *key) {
+  int cursor = jsonValueStart(json, key);
+  if (cursor < 0) return 0;
+  const bool quoted = json[cursor] == '"';
+  if (quoted) ++cursor;
+  const int start = cursor;
+  while (cursor < (int)json.length() && isDigit(json[cursor])) ++cursor;
+  if (cursor == start || (quoted && (cursor >= (int)json.length() || json[cursor] != '"'))) return 0;
+  return json.substring(start, cursor).toInt();
+}
+
+void reportFirebaseHttpError(int httpCode, const String &reply) {
+  Serial.printf("[FIREBASE] HTTP status: %d\n", httpCode);
+  Serial.printf("[FIREBASE] HTTP error: %d\n", httpCode);
+  const long errorCode = jsonNumberField(reply, "code");
+  const String errorMessage = jsonStringField(reply, "message");
+  if (errorCode) Serial.printf("[FIREBASE] Error code: %ld\n", errorCode);
+  if (errorMessage.length()) Serial.printf("[FIREBASE] Error message: %s\n", errorMessage.c_str());
+}
+
+void reportFirebaseTokenFields(const String &token, const String &refresh, long expires) {
+  Serial.printf("[FIREBASE] idToken present: %s\n", token.length() ? "YES" : "NO");
+  Serial.printf("[FIREBASE] refreshToken present: %s\n", refresh.length() ? "YES" : "NO");
+  Serial.printf("[FIREBASE] expiresIn parsed: %ld\n", expires);
+}
+
+// All HTTP calls have a bounded timeout. They are invoked only from scheduled
+// tasks; sensor polling never waits for an authentication retry loop.
+int httpsRequest(const String &url, const char *method, const String &body, String *response = nullptr) {
+  if (WiFi.status() != WL_CONNECTED) return -1;
+  WiFiClientSecure client;
+  // TODO before production: configure a current Google CA bundle for this
+  // client. setInsecure is used only so the first hardware/Firebase test works
+  // on Arduino-ESP32 installations without a certificate bundle.
+  client.setInsecure();
+  HTTPClient https;
+  https.setConnectTimeout(HTTP_TIMEOUT_MS);
+  https.setTimeout(HTTP_TIMEOUT_MS);
+  if (!https.begin(client, url)) return -2;
+  https.addHeader("Content-Type", "application/json");
+  int code = -3;
+  if (!strcmp(method, "POST")) code = https.POST(body);
+  else if (!strcmp(method, "PUT")) code = https.PUT(body);
+  else if (!strcmp(method, "PATCH")) code = https.PATCH(body);
+  else if (!strcmp(method, "DELETE")) code = https.sendRequest("DELETE");
+  else if (!strcmp(method, "GET")) code = https.GET();
+  if (response && code > 0) *response = https.getString();
+  https.end();
+  return code;
+}
+
+String authUrl(const char *path) {
+  return String("https://identitytoolkit.googleapis.com/v1/") + path + "?key=" + FIREBASE_API_KEY;
+}
+
+String refreshUrl() {
+  return String("https://securetoken.googleapis.com/v1/token?key=") + FIREBASE_API_KEY;
+}
+
+String dbUrl(const String &path) {
+  return String(FIREBASE_DATABASE_URL) + path + (idToken.length() ? "?auth=" + idToken : "");
+}
+
+void markAuthFailed(const char *reason) {
+  Serial.printf("[FIREBASE] Authentication failed: %s; retry in %lu s\n", reason, authRetryMs / 1000UL);
+  idToken = "";
+  tokenExpiresAt = 0;
+  authState = AUTH_IDLE;
+  authRetryMs = min(authRetryMs * 2UL, AUTH_MAX_RETRY_MS);
+}
+
+bool signIn() {
+  if (String(FIREBASE_DEVICE_PASSWORD) == "REPLACE_WITH_DEVICE_PASSWORD") {
+    Serial.println("[FIREBASE] Set FIREBASE_DEVICE_PASSWORD in config.h");
+    return false;
+  }
+  String reply;
+  String body = String("{\"email\":\"") + FIREBASE_DEVICE_EMAIL + "\",\"password\":\"" + FIREBASE_DEVICE_PASSWORD + "\",\"returnSecureToken\":true}";
+  int code = httpsRequest(authUrl("accounts:signInWithPassword"), "POST", body, &reply);
+  if (code < 200 || code >= 300) { reportFirebaseHttpError(code, reply); markAuthFailed("sign-in request"); return false; }
+  idToken = jsonStringField(reply, "idToken");
+  refreshToken = jsonStringField(reply, "refreshToken");
+  long expires = jsonNumberField(reply, "expiresIn");
+  Serial.printf("[FIREBASE] HTTP status: %d\n", code);
+  reportFirebaseTokenFields(idToken, refreshToken, expires);
+  if (!idToken.length() || !refreshToken.length() || expires <= 0) { markAuthFailed("invalid sign-in response"); return false; }
+  tokenExpiresAt = time(nullptr) + expires;
+  authState = AUTH_READY;
+  authRetryMs = AUTH_INITIAL_RETRY_MS;
+  Serial.println("[FIREBASE] Authentication successful");
+  return true;
+}
+
+bool refreshAuthToken() {
+  String reply;
+  String body = String("grant_type=refresh_token&refresh_token=") + refreshToken;
+  // OAuth token exchange uses form encoding.
+  if (WiFi.status() != WL_CONNECTED) return false;
+  WiFiClientSecure client;
+  client.setInsecure(); // Replace with a maintained CA bundle before production.
+  HTTPClient https;
+  https.setConnectTimeout(HTTP_TIMEOUT_MS); https.setTimeout(HTTP_TIMEOUT_MS);
+  if (!https.begin(client, refreshUrl())) return false;
+  https.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  int code = https.POST(body);
+  if (code > 0) reply = https.getString();
+  https.end();
+  if (code < 200 || code >= 300) { reportFirebaseHttpError(code, reply); markAuthFailed("token refresh"); return false; }
+  idToken = jsonStringField(reply, "id_token");
+  refreshToken = jsonStringField(reply, "refresh_token");
+  long expires = jsonNumberField(reply, "expires_in");
+  Serial.printf("[FIREBASE] HTTP status: %d\n", code);
+  reportFirebaseTokenFields(idToken, refreshToken, expires);
+  if (!idToken.length() || !refreshToken.length() || expires <= 0) { markAuthFailed("invalid refresh response"); return false; }
+  tokenExpiresAt = time(nullptr) + expires;
+  authState = AUTH_READY;
+  Serial.println("[FIREBASE] Token refreshed");
+  return true;
+}
+
+void serviceAuthentication(uint32_t now) {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (authState == AUTH_READY && validClock() && time(nullptr) < tokenExpiresAt - 300) return;
+  if (!elapsed(now, lastAuthAttemptMs, authRetryMs)) return;
+  lastAuthAttemptMs = now;
+  Serial.println(authState == AUTH_READY ? "[FIREBASE] Refreshing token" : "[FIREBASE] Authenticating");
+  if (authState == AUTH_READY && refreshToken.length()) refreshAuthToken();
+  else signIn();
+}
+
+void syncClock() {
+  if (WiFi.status() != WL_CONNECTED || validClock()) return;
+  configTime(0, 0, "time.google.com", "pool.ntp.org", "time.nist.gov");
+  Serial.println("[TIME] NTP sync requested");
+}
+
+// AC-supply detection: derived from the same AC_PRESENT_VOLTAGE_THRESHOLD
+// the emergency voltage alarm already uses to decide "AC off" vs "low voltage".
+// Centralised here so every code path (live, history, alerts) reports the
+// same value. Only valid readings (voltage is finite) can decide; a comm
+// failure does not touch acSupplyOn here — comm-failure state is tracked
+// separately by the alert pipeline (see checkAlerts()).
+bool isAcPresent(const Reading &r) {
+  if (!r.valid) return false;
+  return isfinite(r.voltage) && r.voltage >= AC_PRESENT_VOLTAGE_THRESHOLD;
+}
+
+bool isOvervoltage(const Reading &r) {
+  return r.valid && isfinite(r.voltage) && r.voltage > HIGH_VOLTAGE_LIMIT;
+}
+
+bool isUndervoltage(const Reading &r) {
+  // Must be AC-present (voltage above the "off" threshold) — otherwise a
+  // reading of 0 V (load switched off) is not an undervoltage fault.
+  return r.valid && isfinite(r.voltage)
+    && r.voltage >= AC_PRESENT_VOLTAGE_THRESHOLD
+    && r.voltage < LOW_VOLTAGE_LIMIT;
+}
+
+String readingJson(const Reading &r, time_t timestamp, bool history) {
+  const bool acOn = isAcPresent(r);
+  char data[320];
+  snprintf(data, sizeof(data),
+    "{\"voltage\":%.1f,\"current\":%.2f,\"power\":%.1f,\"energy\":%.3f,\"frequency\":%.1f,\"pf\":%.2f,\"status\":\"online\",\"acSupplyOn\":%s,\"timestamp\":%lld}",
+    r.voltage, r.current, r.power, r.energy, r.frequency, r.pf,
+    acOn ? "true" : "false",
+    (long long)timestamp);
+  String out(data);
+  if (!history) out = out.substring(0, out.length() - 1) + ",\"lastSeen\":" + String((long long)timestamp) + "}";
+  return out;
+}
+
+uint16_t modbusCrc(const uint8_t *data, size_t length) {
+  uint16_t crc = 0xFFFF;
+  while (length--) {
+    crc ^= *data++;
+    for (uint8_t bit = 0; bit < 8; ++bit) crc = (crc & 1) ? (crc >> 1) ^ 0xA001 : crc >> 1;
+  }
+  return crc;
+}
+
+// Sends the same read-only 0x04 register request used by PZEM004Tv30. It is
+// invoked only after a library read fails and never changes a PZEM setting.
+PzemRawResult probePzemRaw(uint8_t address, uint8_t *reply, size_t &replyLength) {
+  uint8_t request[8] = { address, 0x04, 0x00, 0x00, 0x00, 0x0A, 0x00, 0x00 };
+  const uint16_t crc = modbusCrc(request, 6);
+  request[6] = crc & 0xFF;
+  request[7] = crc >> 8;
+  while (Serial2.available()) Serial2.read();
+  Serial2.write(request, sizeof(request));
+  Serial2.flush();
+
+  replyLength = 0;
+  const uint32_t started = millis();
+  while ((uint32_t)(millis() - started) < 200 && replyLength < 32) {
+    while (Serial2.available() && replyLength < 32) reply[replyLength++] = Serial2.read();
+    delay(1);
+  }
+  if (replyLength == 0) return PZEM_RAW_NO_BYTES;
+  const bool crcOk = replyLength >= 2 && modbusCrc(reply, replyLength - 2) == ((uint16_t)reply[replyLength - 2] | ((uint16_t)reply[replyLength - 1] << 8));
+  if (!crcOk || reply[0] != address || reply[1] != 0x04) return PZEM_RAW_INVALID_FRAME;
+  return (replyLength == 25 && reply[2] == 20) ? PZEM_RAW_VALID : PZEM_RAW_UNEXPECTED_FORMAT;
+}
+
+void diagnosePzemFailure(uint8_t address) {
+  uint8_t reply[32];
+  size_t length = 0;
+  switch (probePzemRaw(address, reply, length)) {
+    case PZEM_RAW_NO_BYTES:
+      Serial.printf("[PZEM %u] DIAG: 0 UART bytes. With USB-TTL verified, this indicates the direct ESP32/PZEM logic-level interface or wiring.\n", address);
+      break;
+    case PZEM_RAW_INVALID_FRAME:
+      Serial.printf("[PZEM %u] DIAG: %u invalid UART byte(s), indicating noise, logic-level mismatch, or wiring.\n", address, (unsigned)length);
+      break;
+    case PZEM_RAW_UNEXPECTED_FORMAT:
+      Serial.printf("[PZEM %u] DIAG: CRC-valid frame with unexpected format (%u bytes).\n", address, (unsigned)length);
+      break;
+    case PZEM_RAW_VALID:
+      Serial.printf("[PZEM %u] DIAG: valid raw frame; library timeout was transient.\n", address);
+      break;
+  }
+}
+
+void readMeter(uint8_t i) {
+  flushStalePzemRx();  // step 1-2: previous transaction is done; drop anything still in the RX buffer
+  selectPzemMux(i);    // step 3-4: route this PZEM's TX to ESP32_RX_PIN and let the mux settle
+  Serial.printf("[MUX] C%u -> PZEM%u\n", i, ADDRESS[i]);
+  Serial.printf("[PZEM%u] REQUEST\n", ADDRESS[i]);
+  Reading next;
+  next.voltage = pzems[i].voltage();
+  next.current = pzems[i].current();
+  next.power = pzems[i].power();
+  next.energy = pzems[i].energy();
+  next.frequency = pzems[i].frequency();
+  next.pf = pzems[i].pf();
+  next.valid = isfinite(next.voltage) && isfinite(next.current) && isfinite(next.power) && isfinite(next.energy) && isfinite(next.frequency) && isfinite(next.pf);
+  if (next.valid) {
+    next.seenAt = validClock() ? time(nullptr) : 0;
+    readings[i] = next;
+    Serial.printf("[PZEM%u] OK V=%.1f I=%.2f P=%.1f E=%.3f F=%.1f PF=%.2f\n", ADDRESS[i], next.voltage, next.current, next.power, next.energy, next.frequency, next.pf);
+  } else {
+    readings[i].valid = false;
+    Serial.printf("[PZEM%u] TIMEOUT\n", ADDRESS[i]);
+    Serial.printf("[PZEM%u] COMMUNICATION FAILED\n", ADDRESS[i]);
+    diagnosePzemFailure(ADDRESS[i]); // mux channel from selectPzemMux(i) above is still selected here
+  }
+}
+
+// ---------------- Emergency voltage alarm ----------------
+
+void alarmOutputsOff() {
+  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(RED_LED_PIN, LOW);
+  buzzerOn = false;
+  ledOn = false;
+}
+
+// Scans only readings[i].valid == true entries from the cycle that just
+// completed. readMeter() sets valid = false on any PZEM timeout/CRC/format
+// failure, so a communication failure is structurally excluded here - it
+// never reaches this function, let alone the alarm outputs. A reading below
+// AC_PRESENT_VOLTAGE_THRESHOLD is treated as "this PZEM's AC supply is off",
+// not a low-voltage fault, matching Section 4's "voltage = 0V -> NO alarm".
+bool voltageAbnormal(uint8_t &causeAddress, float &causeVoltage, AlarmCause &cause) {
+  for (uint8_t i = 0; i < PZEM_COUNT; ++i) {
+    if (!selected(i) || !readings[i].valid) continue;
+    const float v = readings[i].voltage;
+    if (v < AC_PRESENT_VOLTAGE_THRESHOLD) continue; // AC supply effectively off for this PZEM
+    if (v > HIGH_VOLTAGE_LIMIT) { causeAddress = ADDRESS[i]; causeVoltage = v; cause = ALARM_CAUSE_HIGH_VOLTAGE; return true; }
+    if (v < LOW_VOLTAGE_LIMIT) { causeAddress = ADDRESS[i]; causeVoltage = v; cause = ALARM_CAUSE_LOW_VOLTAGE; return true; }
+  }
+  return false;
+}
+
+// Called once per PZEM poll cycle, after every selected PZEM has been read
+// (see pollMeters()). Starts a single shared alarm event only on the
+// normal->abnormal edge: if alarmActive is already true, or the previous
+// cycle was already abnormal, this does nothing but refresh the edge
+// detector - so it cannot restart/extend a running alarm or stack multiple
+// buzzer timers when several PZEMs are abnormal at once (Section 11).
+void checkVoltageAlarm() {
+  uint8_t address = 0;
+  float voltage = 0;
+  AlarmCause cause = ALARM_CAUSE_NONE;
+  const bool abnormal = voltageAbnormal(address, voltage, cause);
+
+  if (abnormal && !alarmConditionPrev && !alarmActive) {
+    alarmActive = true;
+    alarmStartMs = millis();
+    alarmCause = cause;
+    buzzerOn = true;
+    ledOn = true;
+    buzzerToggleMs = alarmStartMs;
+    ledToggleMs = alarmStartMs;
+    digitalWrite(BUZZER_PIN, HIGH);
+    digitalWrite(RED_LED_PIN, HIGH);
+    if (cause == ALARM_CAUSE_HIGH_VOLTAGE) Serial.printf("[ALARM] PZEM%u HIGH VOLTAGE: %.1f V\n", address, voltage);
+    else Serial.printf("[ALARM] PZEM%u LOW VOLTAGE: %.1f V\n", address, voltage);
+    Serial.println("[ALARM] Emergency alarm STARTED");
+    Serial.println(cause == ALARM_CAUSE_HIGH_VOLTAGE ? "[ALARM] Cause: HIGH_VOLTAGE" : "[ALARM] Cause: LOW_VOLTAGE");
+  }
+  alarmConditionPrev = abnormal;
+}
+
+// Non-blocking: uses millis() comparisons only, called every loop()
+// iteration. Handles the 15s cutoff and the independent buzzer/LED blink
+// patterns. Never calls delay() and never waits on PZEM/Wi-Fi/Firebase
+// state, so it cannot delay polling, MUX switching, UART, or uploads.
+void serviceAlarmOutputs(uint32_t now) {
+  if (!alarmActive) return;
+  if (elapsed(now, alarmStartMs, ALARM_DURATION_MS)) {
+    alarmActive = false;
+    alarmCause = ALARM_CAUSE_NONE;
+    alarmOutputsOff();
+    Serial.println("[ALARM] Emergency alarm STOPPED");
+    return;
+  }
+  if (elapsed(now, buzzerToggleMs, buzzerOn ? BUZZER_ON_MS : BUZZER_OFF_MS)) {
+    buzzerOn = !buzzerOn;
+    buzzerToggleMs = now;
+    digitalWrite(BUZZER_PIN, buzzerOn ? HIGH : LOW);
+  }
+  if (elapsed(now, ledToggleMs, ledOn ? LED_ON_MS : LED_OFF_MS)) {
+    ledOn = !ledOn;
+    ledToggleMs = now;
+    digitalWrite(RED_LED_PIN, ledOn ? HIGH : LOW);
+  }
+}
+
+void pollMeters(uint32_t now) {
+  if (!elapsed(now, lastPollMs, PZEM_POLL_INTERVAL_MS)) return;
+  lastPollMs = now;
+  const uint32_t cycleStart = millis();
+  uint8_t attempted = 0, valid = 0;
+  for (uint8_t i = 0; i < PZEM_COUNT; ++i) {
+    if (!selected(i)) continue;
+    ++attempted;
+    readMeter(i);
+    if (readings[i].valid) {
+      ++valid;
+      validCountThisCycle[i]++;
+    }
+  }
+  const uint32_t cycleMs = millis() - cycleStart;
+  Serial.printf("[POLL] %u-PZEM cycle complete (%u/%u valid)\n", attempted, valid, attempted);
+  Serial.printf("[POLL] Cycle time = %lu ms\n", (unsigned long)cycleMs);
+  if (cycleMs >= LIVE_UPLOAD_INTERVAL_MS) {
+    Serial.println("[POLL] WARNING: cycle time reached the live-upload interval; Wi-Fi/Firebase servicing may be delayed. Consider raising LIVE_UPLOAD_INTERVAL_MS or investigating slow/unresponsive addresses.");
+  }
+  checkVoltageAlarm(); // evaluate against this cycle's fresh readings only
+  checkAlerts();       // evaluate structured per-meter alerts (independent of buzzer/LED)
+}
+
+// ---------------- Structured alerts (Firebase /alerts/pzem_N/<ts>) ----------------
+//
+// checkAlerts() runs once per poll cycle (same cadence as checkVoltageAlarm()).
+// For every selected meter it asks three questions:
+//   - is the voltage over HIGH_VOLTAGE_LIMIT?     -> overvoltage edge
+//   - is the voltage under LOW_VOLTAGE_LIMIT but AC-present? -> undervoltage edge
+//   - has this meter been failing for >= ALERT_COMM_FAIL_STREAK cycles in a row?
+//                                                  -> comm-failure edge
+//
+// Each question is edge-detected via alertState[m][type].active: an alert
+// is enqueued only on the FALSE -> TRUE transition, never while the
+// condition persists. A new alert can fire for the same meter/kind only
+// after the condition has cleared (active -> false) and then reappeared.
+//
+// Comm-failure additionally tracks a consecutive-cycle streak so we don't
+// flood RTDB with one alert per failed poll — the 2.5 s poll cadence would
+// otherwise write ~28 alerts/minute for a permanently-disconnected meter.
+// Only the FIRST cycle after the streak threshold is reached fires; the
+// streak keeps counting so the next alert only fires after the meter
+// recovers AND fails again (streak resets to 0 on success, then climbs
+// from 0 on the next failure).
+//
+// Enqueued alerts go into a tiny ring buffer; uploadAlerts() (called from
+// loop()) drains it on the LIVE_UPLOAD_INTERVAL_MS cadence, so the alert
+// path is non-blocking on the polling side and never delays PZEM reads.
+
+#define ALERT_COMM_FAIL_STREAK 4  // 4 cycles * 2.5 s = 10 s of continuous failure
+
+static void enqueueAlert(uint8_t meterIndex, AlertType type, float value, uint16_t streak) {
+  if (alertBufferHead == alertBufferTail) {
+    // Buffer empty — write at head, advance tail.
+  }
+  uint8_t nextHead = (alertBufferHead + 1) % ALERT_BUFFER_SIZE;
+  if (nextHead == alertBufferTail) {
+    Serial.println("[ALERT] buffer full; dropping oldest pending alert");
+    alertBufferTail = (alertBufferTail + 1) % ALERT_BUFFER_SIZE;
+  }
+  alertBuffer[alertBufferHead] = PendingAlert{
+    ADDRESS[meterIndex], type,
+    validClock() ? time(nullptr) : 0,
+    value, streak
+  };
+  alertBufferHead = nextHead;
+}
+
+static AlertSlot& slot(uint8_t meterIndex, AlertType type) {
+  // type is one of OVERVOLTAGE/UNDERVOLTAGE/COMM_FAILURE (1..3), which
+  // matches the array dimension ALERT_KIND_COUNT.
+  return alertState[meterIndex][type - 1];
+}
+
+void checkAlerts() {
+  for (uint8_t i = 0; i < PZEM_COUNT; ++i) {
+    if (!selected(i)) continue;
+
+    const Reading &r = readings[i];
+
+    // --- Overvoltage ---
+    bool over = isOvervoltage(r);
+    if (over && !slot(i, ALERT_TYPE_OVERVOLTAGE).active) {
+      slot(i, ALERT_TYPE_OVERVOLTAGE).active = true;
+      enqueueAlert(i, ALERT_TYPE_OVERVOLTAGE, r.voltage, 0);
+    } else if (!over && slot(i, ALERT_TYPE_OVERVOLTAGE).active) {
+      slot(i, ALERT_TYPE_OVERVOLTAGE).active = false;
+    }
+
+    // --- Undervoltage (AC must be present; see isUndervoltage) ---
+    bool under = isUndervoltage(r);
+    if (under && !slot(i, ALERT_TYPE_UNDERVOLTAGE).active) {
+      slot(i, ALERT_TYPE_UNDERVOLTAGE).active = true;
+      enqueueAlert(i, ALERT_TYPE_UNDERVOLTAGE, r.voltage, 0);
+    } else if (!under && slot(i, ALERT_TYPE_UNDERVOLTAGE).active) {
+      slot(i, ALERT_TYPE_UNDERVOLTAGE).active = false;
+    }
+
+    // --- Communication failure (consecutive-cycle streak) ---
+    if (!r.valid) {
+      if (commFailStreak[i] < 0xFFFE) commFailStreak[i]++;
+      if (commFailStreak[i] == ALERT_COMM_FAIL_STREAK
+          && !slot(i, ALERT_TYPE_COMM_FAILURE).active) {
+        slot(i, ALERT_TYPE_COMM_FAILURE).active = true;
+        enqueueAlert(i, ALERT_TYPE_COMM_FAILURE, 0.0f, commFailStreak[i]);
+      }
+    } else {
+      // Meter recovered: clear alert edge and reset streak so the next
+      // failure cycle starts counting from 0 again.
+      commFailStreak[i] = 0;
+      if (slot(i, ALERT_TYPE_COMM_FAILURE).active) {
+        slot(i, ALERT_TYPE_COMM_FAILURE).active = false;
+      }
+    }
+
+    // --- Overcurrent ---
+    bool overcurrent = r.valid && isfinite(r.current) && r.current > FAULT_OVERCURRENT_A;
+    if (overcurrent && !slot(i, ALERT_TYPE_OVERCURRENT).active) {
+      slot(i, ALERT_TYPE_OVERCURRENT).active = true;
+      enqueueAlert(i, ALERT_TYPE_OVERCURRENT, r.current, 0);
+      // New emergency fault detected — start the 15s non-blocking buzzer timer.
+      // Reuses existing serviceAlarmOutputs() timing (ALARM_DURATION_MS = 15s).
+      if (alarmActive != true) {
+        alarmActive = true;
+        alarmStartMs = millis();
+        buzzerOn = true;
+        ledOn = true;
+        buzzerToggleMs = alarmStartMs;
+        ledToggleMs = alarmStartMs;
+        digitalWrite(BUZZER_PIN, HIGH);
+        digitalWrite(RED_LED_PIN, HIGH);
+      }
+    } else if (!overcurrent && slot(i, ALERT_TYPE_OVERCURRENT).active) {
+      slot(i, ALERT_TYPE_OVERCURRENT).active = false;
+      // Fault cleared — reset alarm only if no other emergency is active.
+      // (If another emergency fault is active, alarm stays on.)
+      if (!alarmActive) alarmOutputsOff();
+    }
+
+    // --- Power-factor drop ---
+    bool pfDrop = r.valid && isfinite(r.pf) && r.pf < FAULT_PF_DROP;
+    if (pfDrop && !slot(i, ALERT_TYPE_POWER_FACTOR_DROP).active) {
+      slot(i, ALERT_TYPE_POWER_FACTOR_DROP).active = true;
+      enqueueAlert(i, ALERT_TYPE_POWER_FACTOR_DROP, r.pf, 0);
+    } else if (!pfDrop && slot(i, ALERT_TYPE_POWER_FACTOR_DROP).active) {
+      slot(i, ALERT_TYPE_POWER_FACTOR_DROP).active = false;
+    }
+
+    // --- Frequency deviation ---
+    bool freqDev = r.valid && isfinite(r.frequency) && abs(r.frequency - 50.0) > FAULT_FREQ_DEVIATION_HZ;
+    if (freqDev && !slot(i, ALERT_TYPE_FREQUENCY_DEVIATION).active) {
+      slot(i, ALERT_TYPE_FREQUENCY_DEVIATION).active = true;
+      enqueueAlert(i, ALERT_TYPE_FREQUENCY_DEVIATION, r.frequency, 0);
+      // New emergency fault detected — start the 15s non-blocking buzzer timer.
+      // Reuses existing serviceAlarmOutputs() timing (ALARM_DURATION_MS = 15s).
+      if (alarmActive != true) {
+        alarmActive = true;
+        alarmStartMs = millis();
+        buzzerOn = true;
+        ledOn = true;
+        buzzerToggleMs = alarmStartMs;
+        ledToggleMs = alarmStartMs;
+        digitalWrite(BUZZER_PIN, HIGH);
+        digitalWrite(RED_LED_PIN, HIGH);
+      }
+    } else if (!freqDev && slot(i, ALERT_TYPE_FREQUENCY_DEVIATION).active) {
+      slot(i, ALERT_TYPE_FREQUENCY_DEVIATION).active = false;
+      // Fault cleared — reset alarm only if no other emergency is active.
+      // (If another emergency fault is active, alarm stays on.)
+      if (!alarmActive) alarmOutputsOff();
+    }
+
+    // --- Abnormally high power ---
+    bool highPower = r.valid && isfinite(r.power) && r.power > FAULT_HIGH_POWER_W;
+    if (highPower && !slot(i, ALERT_TYPE_HIGH_POWER).active) {
+      slot(i, ALERT_TYPE_HIGH_POWER).active = true;
+      enqueueAlert(i, ALERT_TYPE_HIGH_POWER, r.power, 0);
+      // New emergency fault detected — start the 15s non-blocking buzzer timer.
+      // Reuses existing serviceAlarmOutputs() timing (ALARM_DURATION_MS = 15s).
+      if (alarmActive != true) {
+        alarmActive = true;
+        alarmStartMs = millis();
+        buzzerOn = true;
+        ledOn = true;
+        buzzerToggleMs = alarmStartMs;
+        ledToggleMs = alarmStartMs;
+        digitalWrite(BUZZER_PIN, HIGH);
+        digitalWrite(RED_LED_PIN, HIGH);
+      }
+    } else if (!highPower && slot(i, ALERT_TYPE_HIGH_POWER).active) {
+      slot(i, ALERT_TYPE_HIGH_POWER).active = false;
+      // Fault cleared — reset alarm only if no other emergency is active.
+      // (If another emergency fault is active, alarm stays on.)
+      if (!alarmActive) alarmOutputsOff();
+    }
+
+    // --- Communication degraded (few valid readings) ---
+    // Triggered when a meter has very few valid readings in the current cycle.
+    // This is separate from a complete comm failure (which uses the streak count).
+    bool commDegraded = r.valid && validCountThisCycle[i] > 0 && validCountThisCycle[i] < 3;
+    if (commDegraded && !slot(i, ALERT_TYPE_COMM_DEGRADED).active) {
+      slot(i, ALERT_TYPE_COMM_DEGRADED).active = true;
+      enqueueAlert(i, ALERT_TYPE_COMM_DEGRADED, 0.0f, 0);
+    } else if (!commDegraded && slot(i, ALERT_TYPE_COMM_DEGRADED).active) {
+      slot(i, ALERT_TYPE_COMM_DEGRADED).active = false;
+    }
+  }
+}
+
+String multiPathJson(const char *root, time_t slot) {
+  String body = "{";
+  bool first = true;
+  for (uint8_t i = 0; i < PZEM_COUNT; ++i) {
+    if (!selected(i) || !readings[i].valid) continue;
+    if (!first) body += ',';
+    String path = String(root) + "/pzem_" + ADDRESS[i] + (slot ? "/" + String((long long)slot) : "");
+    body += "\"" + path + "\":" + readingJson(readings[i], slot ? slot : time(nullptr), slot != 0);
+    first = false;
+  }
+  return body + "}";
+}
+
+void uploadLive(uint32_t now) {
+  if (!elapsed(now, lastLiveUploadMs, LIVE_UPLOAD_INTERVAL_MS) || authState != AUTH_READY || !validClock()) return;
+  lastLiveUploadMs = now;
+  String body = multiPathJson("meters", 0);
+  if (body == "{}") return;
+  int code = httpsRequest(dbUrl("/.json"), "PATCH", body);
+  if (code >= 200 && code < 300) Serial.println("[LIVE] Firebase update successful");
+  else Serial.printf("[LIVE] Firebase update failed: %d\n", code);
+}
+
+void saveHistory() {
+  if (authState != AUTH_READY || !validClock()) return;
+  time_t now = time(nullptr);
+  time_t slot = now - (now % HISTORY_SLOT_SECONDS);
+  if (slot == lastHistorySlot) return;
+  String body = multiPathJson("history", slot);
+  if (body == "{}") return;
+  int code = httpsRequest(dbUrl("/.json"), "PATCH", body);
+  if (code >= 200 && code < 300) { lastHistorySlot = slot; Serial.printf("[HISTORY] Saved slot %lld\n", (long long)slot); }
+  else Serial.printf("[HISTORY] Save failed: %d\n", code);
+}
+
+// ---------------- Alert upload ----------------
+//
+// Drains the pending-alert ring buffer into one multi-path PATCH against
+// /alerts/pzem_N/<unix-seconds>, one alert key per record. Each alert is a
+// self-contained JSON object so the dashboard can render it directly:
+//
+//   /alerts/pzem_3/1724301234 = {
+//     "type": "overvoltage",
+//     "voltage": 268.5,
+//     "consecutiveFailCycles": 0,
+//     "timestamp": 1724301234
+//   }
+//
+// Runs on the same 10 s cadence as uploadLive(); does NOT upload if
+// pending alerts are empty. If clock isn't valid yet, all pending alerts
+// are dropped (timestamp=0 keys would clutter RTDB and be useless to the
+// dashboard's chronological view) — they'll re-fire on the next edge.
+const char* alertTypeString(AlertType t) {
+  switch (t) {
+    case ALERT_TYPE_OVERVOLTAGE:   return "overvoltage";
+    case ALERT_TYPE_UNDERVOLTAGE:  return "undervoltage";
+    case ALERT_TYPE_COMM_FAILURE:  return "comm_failure";
+    case ALERT_TYPE_OVERCURRENT:   return "overcurrent";
+    case ALERT_TYPE_POWER_FACTOR_DROP: return "power_factor_drop";
+    case ALERT_TYPE_FREQUENCY_DEVIATION: return "frequency_deviation";
+    case ALERT_TYPE_HIGH_POWER:    return "high_power";
+    case ALERT_TYPE_COMM_DEGRADED: return "comm_degraded";
+    default:                       return "unknown";
+  }
+}
+
+void uploadAlerts(uint32_t now) {
+  if (authState != AUTH_READY || !validClock()) return;
+  if (alertBufferHead == alertBufferTail) return;
+  if (!elapsed(now, lastAlertUploadMs, LIVE_UPLOAD_INTERVAL_MS)) return;
+  lastAlertUploadMs = now;
+
+  String body = "{";
+  bool first = true;
+  uint8_t drained = 0;
+
+  while (alertBufferTail != alertBufferHead && drained < 9) {
+    // Cap at 9 per cycle so a burst can't make one request unbounded;
+    // remaining alerts go out on the next 10 s cycle.
+    const PendingAlert &a = alertBuffer[alertBufferTail];
+    if (a.timestamp <= 0) {
+      alertBufferTail = (alertBufferTail + 1) % ALERT_BUFFER_SIZE;
+      continue; // drop timestamp-less alert rather than write a useless key
+    }
+    String path = String("alerts/pzem_") + a.address + "/" + String((long long)a.timestamp);
+    char obj[200];
+    if (a.type == ALERT_TYPE_COMM_FAILURE) {
+      snprintf(obj, sizeof(obj),
+        "{\"type\":\"comm_failure\",\"severity\":\"WARNING\",\"consecutiveFailCycles\":%u,\"timestamp\":%lld}",
+        a.consecutiveFails, (long long)a.timestamp);
+    } else if (a.type == ALERT_TYPE_OVERCURRENT) {
+      snprintf(obj, sizeof(obj),
+        "{\"type\":\"overcurrent\",\"severity\":\"EMERGENCY\",\"current\":%.2f,\"timestamp\":%lld}",
+        a.value, (long long)a.timestamp);
+    } else if (a.type == ALERT_TYPE_POWER_FACTOR_DROP) {
+      snprintf(obj, sizeof(obj),
+        "{\"type\":\"power_factor_drop\",\"severity\":\"WARNING\",\"pf\":%.3f,\"timestamp\":%lld}",
+        a.value, (long long)a.timestamp);
+    } else if (a.type == ALERT_TYPE_FREQUENCY_DEVIATION) {
+      snprintf(obj, sizeof(obj),
+        "{\"type\":\"frequency_deviation\",\"severity\":\"EMERGENCY\",\"frequency\":%.2f,\"timestamp\":%lld}",
+        a.value, (long long)a.timestamp);
+    } else if (a.type == ALERT_TYPE_HIGH_POWER) {
+      snprintf(obj, sizeof(obj),
+        "{\"type\":\"high_power\",\"severity\":\"EMERGENCY\",\"power\":%.1f,\"timestamp\":%lld}",
+        a.value, (long long)a.timestamp);
+    } else if (a.type == ALERT_TYPE_COMM_DEGRADED) {
+      snprintf(obj, sizeof(obj),
+        "{\"type\":\"comm_degraded\",\"severity\":\"WARNING\",\"timestamp\":%lld}",
+        (long long)a.timestamp);
+    } else {
+      snprintf(obj, sizeof(obj),
+        "{\"type\":\"%s\",\"severity\":\"UNKNOWN\",\"voltage\":%.1f,\"timestamp\":%lld}",
+        alertTypeString(a.type), a.value, (long long)a.timestamp);
+    }
+    if (!first) body += ',';
+    body += "\"" + path + "\":" + String(obj);
+    first = false;
+    Serial.printf("[ALERT] queued PZEM%u %s v=%.1f ts=%lld\n",
+      a.address, alertTypeString(a.type), a.value, (long long)a.timestamp);
+    alertBufferTail = (alertBufferTail + 1) % ALERT_BUFFER_SIZE;
+    drained++;
+  }
+
+  body += "}";
+  if (first) return; // nothing usable drained
+  int code = httpsRequest(dbUrl("/.json"), "PATCH", body);
+  if (code >= 200 && code < 300) Serial.printf("[ALERT] uploaded %u alert(s)\n", drained);
+  else Serial.printf("[ALERT] upload failed: %d\n", code);
+}
+
+// Deletes ALL records older than the 60-day retention window.
+// Uses batched queries (limitToFirst=50) to avoid unbounded requests while
+// guaranteeing no expired-data backlog accumulates. Iterates until no more
+// expired records remain for each PZEM.
+void cleanupHistory(uint32_t now) {
+  if (!elapsed(now, lastCleanupMs, CLEANUP_INTERVAL_MS) || authState != AUTH_READY || !validClock()) return;
+  lastCleanupMs = now;
+  time_t cutoff = time(nullptr) - HISTORY_RETENTION_SECONDS;
+
+  for (uint8_t i = 0; i < PZEM_COUNT; ++i) {
+    if (!selected(i)) continue;
+
+    int totalRemoved = 0;
+    // Process in batches until no more expired records remain
+    for (int batch = 0; batch < MAX_CLEANUP_BATCHES_PER_CYCLE; ++batch) {
+      String query = String("/history/pzem_") + ADDRESS[i]
+        + ".json?orderBy=%22%24key%22&endAt=%22" + String((long long)cutoff) + "%22&limitToFirst=50&auth=" + idToken;
+      String reply;
+      int listCode = httpsRequest(String(FIREBASE_DATABASE_URL) + query, "GET", "", &reply);
+      if (listCode < 200 || listCode >= 300) break;
+
+      int cursor = 0;
+      int batchRemoved = 0;
+
+      while (true) {
+        int quote = reply.indexOf('"', cursor);
+        if (quote < 0) break;
+        int end = reply.indexOf('"', quote + 1);
+        if (end < 0) break;
+        String key = reply.substring(quote + 1, end);
+        cursor = end + 1;
+
+        // Validate key is a positive numeric timestamp
+        char *tail = nullptr;
+        long long stamp = strtoll(key.c_str(), &tail, 10);
+        if (!key.length() || *tail || stamp <= 0 || stamp >= cutoff) continue;
+
+        int code = httpsRequest(dbUrl(String("/history/pzem_") + ADDRESS[i] + "/" + key + ".json"), "DELETE", "");
+        if (code >= 200 && code < 300) {
+          batchRemoved++;
+          totalRemoved++;
+        }
+      }
+
+      if (batchRemoved == 0) break; // no more expired records for this PZEM
+    }
+
+    if (totalRemoved > 0) {
+      Serial.printf("[CLEANUP] PZEM %u removed %d expired record(s)\n", ADDRESS[i], totalRemoved);
+    }
+  }
+}
+
+String apName() {
+  return String("SmartEnergy-") + String((uint32_t)ESP.getEfuseMac(), HEX).substring(4);
+}
+
+void startPortal() {
+  if (portalRunning) return;
+  String ap = apName();
+  wifiManager.setConfigPortalBlocking(false);
+  wifiManager.setAPCallback([](WiFiManager *) { Serial.println("[WIFI] AP started; open http://192.168.4.1"); });
+  wifiManager.startConfigPortal(ap.c_str());
+  portalRunning = true;
+  Serial.printf("[WIFI] Provisioning AP: %s\n", ap.c_str());
+}
+
+void serviceWiFi(uint32_t now) {
+  wifiManager.process();
+  if (WiFi.status() == WL_CONNECTED) {
+    if (portalRunning) { portalRunning = false; Serial.printf("[WIFI] Connected: %s\n", WiFi.localIP().toString().c_str()); }
+    return;
+  }
+  if (portalRunning) return;
+  if (!elapsed(now, lastWiFiRetryMs, WIFI_RETRY_INTERVAL_MS)) return;
+  lastWiFiRetryMs = now;
+  startPortal();
+}
+
+void setup() {
+  Serial.begin(SERIAL_MONITOR_BAUD);
+  Serial.println("\n[BOOT] Smart Energy Monitoring System");
+  if (PZEM_TEST_MODE && (PZEM_TEST_ADDRESS < 1 || PZEM_TEST_ADDRESS > 9)) { Serial.println("[BOOT] Invalid PZEM_TEST_ADDRESS"); while (true) delay(1000); }
+  pinMode(MUX_S0, OUTPUT);
+  pinMode(MUX_S1, OUTPUT);
+  pinMode(MUX_S2, OUTPUT);
+  pinMode(MUX_S3, OUTPUT);
+  selectPzemMux(0); // deterministic mux state (channel 0 / PZEM1) before Serial2 starts
+  pinMode(RED_LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  alarmOutputsOff(); // deterministic off state before any polling/alarm logic runs
+  Serial2.begin(PZEM_BAUD, SERIAL_8N1, ESP32_RX_PIN, ESP32_TX_PIN);
+  for (uint8_t i = 0; i < PZEM_COUNT; ++i) pzems[i] = PZEM004Tv30(Serial2, ESP32_RX_PIN, ESP32_TX_PIN, ADDRESS[i]);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  bool connected = false;
+  if (strlen(WIFI_SSID)) {
+    Serial.println("[WIFI] Trying optional WIFI_SSID from config.h");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    const uint32_t started = millis();
+    while (WiFi.status() != WL_CONNECTED && (uint32_t)(millis() - started) < 10000UL) delay(200);
+    connected = WiFi.status() == WL_CONNECTED;
+  }
+  if (!connected) {
+    wifiManager.setConfigPortalBlocking(false);
+    wifiManager.setAPCallback([](WiFiManager *) { Serial.println("[WIFI] AP started; open http://192.168.4.1"); });
+    connected = wifiManager.autoConnect(apName().c_str());
+  }
+  if (connected) Serial.printf("[WIFI] Connected: %s\n", WiFi.localIP().toString().c_str());
+  else { portalRunning = true; Serial.printf("[WIFI] Provisioning AP: %s (open http://192.168.4.1)\n", apName().c_str()); }
+  if (PZEM_TEST_MODE) {
+    Serial.printf("[BOOT] PZEM test mode: ON — monitoring ONLY address %u. This is a diagnostic build, not production.\n", PZEM_TEST_ADDRESS);
+  } else {
+    Serial.printf("[BOOT] PZEM test mode: OFF — monitoring all %u addresses (1..%u).\n", PZEM_COUNT, PZEM_COUNT);
+  }
+}
+
+void loop() {
+  uint32_t now = millis();
+  serviceWiFi(now);
+  if (WiFi.status() == WL_CONNECTED) syncClock();
+  serviceAuthentication(now);
+  pollMeters(now);
+  uploadLive(now);
+  saveHistory();
+  cleanupHistory(now);
+  serviceAlarmOutputs(now);
+  delay(2);
+}

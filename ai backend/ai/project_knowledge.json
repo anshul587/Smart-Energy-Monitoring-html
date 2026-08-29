@@ -1,0 +1,38 @@
+{
+  "project_name": "Smart Monitoring System",
+  "project_name_full": "Smart Energy Monitoring System & Suggestions for Energy Conservation",
+  "project_guide": "Dr. Bhupendra Kumar",
+  "developer": "Anshul Ninawe",
+  "dashboard_developer": "Anshul Ninawe",
+  "team_members": [
+    "Yash Kawale",
+    "Yash Dahake",
+    "Swapnil Shendre",
+    "Chetan Bokade",
+    "Sanjog Godbole"
+  ],
+  "hardware_team": [
+    "Yash Kawale",
+    "Yash Dahake",
+    "Swapnil Shendre",
+    "Chetan Bokade",
+    "Sanjog Godbole"
+  ],
+  "purpose": "Provide real-time visibility and predictive insight into industrial energy consumption across multiple circuits, so operators can reduce waste, catch faults early, and plan maintenance.",
+  "problem_solved": "Industrial sites often lack per-circuit energy visibility. Manual meter reading is slow and error-prone, faults are noticed only after downtime, and there is no forecasting or maintenance planning. This system automates metering, anomaly/fault detection, peak and forecast analysis, and reporting.",
+  "architecture": "PZEM energy meters are polled by ESP32 microcontrollers and published to Firebase Realtime Database. A Python AI backend reads the data, runs analysis stages (anomaly detection, fault diagnosis, peak detection, forecasting, bill prediction, maintenance risk, energy-saving recommendations), and writes results back. The web dashboard subscribes to live meter data and reads AI results through a read-only REST API, presenting everything in one interface.",
+  "data_flow": "PZEM meter measures voltage/current/power/energy/frequency -> ESP32 reads it -> published to Firebase RTDB (meters/ and history/) -> dashboard shows live readings and the AI backend processes them -> AI results written to ai/* in Firebase -> dashboard and Ask BOB read those results via the REST API.",
+  "hardware": "ESP32 Wi-Fi microcontrollers and PZEM energy meters (PZEM-004T / PZEM-016 style) measuring voltage, current, active power, energy and frequency, across 9 monitored circuits. Non-intrusive clamp-style current sensing avoids rewiring panels.",
+  "software_stack": "ESP32 firmware, a centralized cloud data store, a Python backend (Flask read-only REST API; pandas, scikit-learn and related libraries for the AI stages), and a static web dashboard built with HTML/CSS/JavaScript using Chart.js. Ask BOB optionally uses the Anthropic Claude API for natural-language responses.",
+  "dashboard_capabilities": "Live overview of total power, energy, online meters and average voltage; per-PZEM cards with status; real-time power chart; power forecast chart; manual bill calculator plus AI bill prediction; AI energy-saving suggestions; an automated monthly PDF report; CSV export; and light/dark themes.",
+  "ai_capabilities": "Anomaly detection on meter behaviour, fault diagnosis (e.g. over/under-voltage, over-current), peak-load detection, short-term power forecasting, bill prediction, maintenance-risk scoring per meter, and energy-saving recommendations.",
+  "advantages": "Low-cost and scalable hardware, real-time per-circuit granularity, cloud dashboard accessible from anywhere, predictive maintenance before failures, automated reporting, and non-intrusive installation that does not require panel rewiring.",
+  "limitations": "Operation depends on Wi-Fi and cloud connectivity (meters show offline when the link is lost); PZEM measurement accuracy is limited by the sensor class; forecast and recommendation quality depend on the depth of historical data; the optional LLM features require an external API key; and it is a monitoring/insight tool, not a certified revenue-grade metering device.",
+  "pzem_count": 9,
+  "why_esp32": "The ESP32 is inexpensive, has built-in Wi-Fi, and is capable of polling PZEM meters over UART/Modbus, making it a practical bridge between the meters and the cloud without a PC at each site.",
+  "why_firebase": "Firebase Realtime Database gives serverless, low-latency synchronisation so both the dashboard and the backend can read and write the same data from anywhere without running a custom message broker or database server.",
+  "ai_backend_role": "The AI backend runs the analysis stages and exposes their results through a read-only REST API, so heavy computation and credentials stay server-side and the dashboard never touches raw AI logic or secrets.",
+  "rest_api_role": "The REST API is the single read-only gateway the dashboard and Ask BOB use to fetch meter and AI results, keeping credentials and internal paths off the client.",
+  "offline_behavior": "When a PZEM loses its link, the dashboard marks that meter offline and the AI backend excludes its stale readings from aggregates; the system keeps showing the last known state and resumes live updates when the meter reconnects.",
+  "security_note": "Access uses a server-side service-account key held only by the backend; the browser uses a limited client SDK. The REST API and Ask BOB never expose credentials, API keys, environment variables, or internal filesystem paths to the client."
+}

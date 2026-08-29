@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#07172e">
+  <title>Smart Monitoring System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=6">
+  <link rel="stylesheet" href="bob.css">
+  <link rel="stylesheet" href="info.css?v=2">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">⌁</div>
+        <div>
+          <p class="eyebrow">ENERGY INTELLIGENCE</p>
+          <h1>Smart Monitoring System</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="connection-pill" id="connectionStatus"><span></span> Connecting</div>
+        <button class="icon-button" id="infoButton" type="button" aria-label="About this project" title="About this project">&#9432;</button>
+        <button class="icon-button" id="themeToggle" type="button" aria-label="Toggle dark mode">◐</button>
+        <button class="export-button" id="exportButton" type="button">Export CSV</button>
+      </div>
+    </header>
+
+    <section class="hero-panel" aria-labelledby="overviewTitle">
+      <div class="hero-copy">
+        <p class="eyebrow">LIVE OVERVIEW</p>
+        <h2 id="overviewTitle">Your complete energy picture, in one place.</h2>
+        <p class="hero-note" id="lastUpdated">Waiting for live meter data…</p>
+      </div>
+      <div class="hero-wave" aria-hidden="true">
+        <svg viewBox="0 0 500 150" preserveAspectRatio="none">
+          <path d="M0,112 C36,112 40,45 78,45 S117,128 155,128 S192,71 232,71 S276,24 314,24 S351,101 388,101 S426,54 462,54 S480,86 500,86" />
+        </svg>
+      </div>
+    </section>
+
+    <section class="summary-grid" aria-label="Energy summary">
+      <article class="summary-card primary-summary">
+        <span class="summary-label">Total active power</span>
+        <strong id="totalPower">0.0 <small>W</small></strong>
+        <span class="summary-caption" id="totalPowerCaption">Across 9 monitored circuits</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Total energy</span>
+        <strong id="totalEnergy">0.00 <small>kWh</small></strong>
+        <span class="summary-caption">Combined meter readings</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Online meters</span>
+        <strong id="onlineMeters">0 <small>/ 9</small></strong>
+        <span class="summary-caption">Receiving live updates</span>
+      </article>
+      <article class="summary-card">
+        <span class="summary-label">Average voltage</span>
+        <strong id="averageVoltage">0.0 <small>V</small></strong>
+        <span class="summary-caption">Across active meters</span>
+      </article>
+    </section>
+
+    <section class="bill-panel" aria-labelledby="billTitle">
+      <div class="bill-heading">
+        <div>
+          <p class="eyebrow">ENERGY BILL CALCULATOR</p>
+          <h2 id="billTitle">Estimated bill for all meters</h2>
+          <p>Uses the total energy currently reported by your PZEM meters.</p>
+        </div>
+        <label class="rate-control" for="unitRate">
+          <span>Electricity price per unit (₹/kWh)</span>
+          <select id="unitRate">
+            <option value="" selected disabled>Select your price</option>
+            <option value="4">₹4.00 per unit</option>
+            <option value="5">₹5.00 per unit</option>
+            <option value="6">₹6.00 per unit</option>
+            <option value="7">₹7.00 per unit</option>
+            <option value="8">₹8.00 per unit</option>
+            <option value="10">₹10.00 per unit</option>
+            <option value="12">₹12.00 per unit</option>
+          </select>
+        </label>
+      </div>
+      <div class="bill-summary">
+        <article>
+          <span>Total units consumed</span>
+          <strong id="billTotalUnits">0.00 <small>kWh</small></strong>
+        </article>
+        <article>
+          <span>Estimated electricity cost</span>
+          <strong id="billTotalCost">₹0.00</strong>
+          <small id="billRateText">Select your price per unit</small>
+        </article>
+      </div>
+
+      <div class="bill-ai" aria-live="polite">
+        <div class="bill-ai-head">
+          <p class="eyebrow">AI BILL PREDICTION</p>
+          <span class="chart-note" id="billPredNote">Loading…</span>
+        </div>
+        <div class="bill-ai-grid">
+          <div class="bill-ai-cell">
+            <span>Actual consumption</span>
+            <strong id="billActualUnits">—</strong>
+          </div>
+          <div class="bill-ai-cell">
+            <span>Forecasted consumption</span>
+            <strong id="billForecastUnits">—</strong>
+          </div>
+          <div class="bill-ai-cell">
+            <span>Estimated total</span>
+            <strong id="billEstimatedTotalUnits">—</strong>
+          </div>
+          <div class="bill-ai-cell">
+            <span>Predicted bill</span>
+            <strong id="billPredictedCost">—</strong>
+            <small id="billPredRate">Select your price per unit</small>
+          </div>
+          <div class="bill-ai-cell">
+            <span>Difference vs actual</span>
+            <strong id="billPredictedDiff">—</strong>
+          </div>
+        </div>
+        <p class="forecast-caption" id="billPredCaption"></p>
+      </div>
+
+      <p class="bill-note">For a monthly bill, reset PZEM energy at the start of the month or subtract the previous month’s meter reading.</p>
+    </section>
+
+    <div class="upper-dashboard">
+      <div class="dashboard-row">
+        <section class="bill-ai energy-saving" aria-labelledby="energySavingTitle">
+          <div class="bill-ai-head">
+            <div>
+              <p class="eyebrow">AI ENERGY SAVING</p>
+              <h2 id="energySavingTitle">Saving suggestions</h2>
+            </div>
+            <span class="chart-note" id="energySavingNote">Loading…</span>
+          </div>
+          <div class="energy-saving-list" id="energySavingList" aria-live="polite"></div>
+        </section>
+
+        <section class="bill-ai reports" aria-labelledby="reportsTitle">
+          <div class="bill-ai-head">
+            <div>
+              <p class="eyebrow">AUTOMATED REPORTS</p>
+              <h2 id="reportsTitle">Energy reports</h2>
+            </div>
+          </div>
+          <p class="chart-note">Monthly energy report (open in new tab).</p>
+          <div class="report-actions">
+            <a class="report-link" href="reports/monthly/latest.pdf" target="_blank" rel="noopener">Open Monthly PDF</a>
+          </div>
+        </section>
+      </div>
+
+      <section class="chart-panel" aria-labelledby="chartTitle">
+        <div class="chart-heading">
+          <div>
+            <p class="eyebrow">LIVE USAGE</p>
+            <h2 id="chartTitle">Real-time power</h2>
+          </div>
+          <span class="chart-note">Last 30 updates</span>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="powerChart" aria-label="Live active power graph for PZEM 1 to PZEM 9"></canvas>
+        </div>
+      </section>
+
+      <div class="dashboard-row">
+        <section class="chart-panel" aria-labelledby="forecastTitle">
+          <div class="chart-heading">
+            <div>
+              <p class="eyebrow">POWER FORECAST</p>
+              <h2 id="forecastTitle">Power forecast</h2>
+              <p class="chart-note" id="forecastNote">Loading forecast…</p>
+            </div>
+            <div class="forecast-controls">
+              <div class="forecast-toggle" role="group" aria-label="Forecast horizon">
+                <button class="pzem-tab active" data-horizon="24h" type="button" aria-pressed="true">24h</button>
+                <button class="pzem-tab" data-horizon="7d" type="button" aria-pressed="false">7d</button>
+              </div>
+              <label class="forecast-select-wrap" for="forecastPzem">
+                <span>Meter</span>
+                <select id="forecastPzem">
+                  <option value="system" selected>System</option>
+                  <option value="pzem_1">PZEM 1</option>
+                  <option value="pzem_2">PZEM 2</option>
+                  <option value="pzem_3">PZEM 3</option>
+                  <option value="pzem_4">PZEM 4</option>
+                  <option value="pzem_5">PZEM 5</option>
+                  <option value="pzem_6">PZEM 6</option>
+                  <option value="pzem_7">PZEM 7</option>
+                  <option value="pzem_8">PZEM 8</option>
+                  <option value="pzem_9">PZEM 9</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="forecastChart" aria-label="Historical actual power and forecast continuation"></canvas>
+          </div>
+          <p class="forecast-caption" id="forecastCaption"></p>
+        </section>
+
+        <section class="chart-panel" aria-labelledby="frequencyTitle">
+          <div class="chart-heading">
+            <div>
+              <p class="eyebrow">LIVE COMMON FREQUENCY</p>
+              <h2 id="frequencyTitle">Common frequency</h2>
+            </div>
+            <span class="chart-note">Latest 100 updates</span>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="frequencyChart" aria-label="Live common frequency graph"></canvas>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <section class="section-heading">
+      <div>
+        <p class="eyebrow">CIRCUIT MONITORING</p>
+        <h2>All PZEM meters</h2>
+      </div>
+      <span class="meter-count" id="meterCount">9 meters</span>
+    </section>
+
+    <section class="meter-grid" id="dashboardContent" aria-live="polite"></section>
+  </main>
+
+  <template id="meterTemplate">
+    <article class="meter-card">
+      <div class="meter-card-header">
+        <div class="meter-title-wrap">
+          <span class="meter-number"></span>
+          <div>
+            <h3 class="meter-name"></h3>
+            <p class="meter-id"></p>
+          </div>
+        </div>
+      </div>
+      <div class="meter-status-group">
+        <span class="meter-status comm-status"><i></i><b></b></span>
+        <span class="meter-status ac-status"><i></i><b></b></span>
+      </div>
+      <div class="meter-power"><strong></strong><span>W</span></div>
+      <div class="power-track"><span></span></div>
+      <div class="power-viz" aria-hidden="true"></div>
+      <dl class="reading-grid">
+        <div><dt>Voltage</dt><dd class="voltage"></dd></div>
+        <div><dt>Current</dt><dd class="current"></dd></div>
+        <div><dt>Energy</dt><dd class="energy"></dd></div>
+        <div><dt>Power factor</dt><dd class="pf"></dd></div>
+        <div><dt>Frequency</dt><dd class="freq"></dd></div>
+      </dl>
+<div class="fault-info"></div>
+      <div class="ai-status" id="aiStatus_pzem"></div>
+  </article>
+</template>
+
+  <dialog class="meter-dialog pzem-modal" id="meterDialog">
+    <div class="dialog-header">
+      <div>
+        <h2 id="dialogMeterName">PZEM 1</h2>
+        <p class="meter-id" id="dialogMeterId">PZEM_1</p>
+        <span class="meter-status" id="modalStatusPill"><i></i><b id="modalStatusText">Online</b></span>
+      </div>
+      <button class="icon-button" id="closeDialog" type="button" aria-label="Close popup">×</button>
+    </div>
+
+    <div class="pzem-modal-stats" id="modalStats">
+      <div><span>Power</span><strong id="modalPower">0.0 <small>W</small></strong></div>
+      <div><span>Voltage</span><strong id="modalVoltage">0.0 <small>V</small></strong></div>
+      <div><span>Current</span><strong id="modalCurrent">0.00 <small>A</small></strong></div>
+      <div><span>Energy</span><strong id="modalEnergy">0.00 <small>kWh</small></strong></div>
+      <div><span>Power Factor</span><strong id="modalPF">0.00</strong></div>
+    </div>
+
+    <div class="pzem-modal-tabs" role="tablist">
+      <button class="pzem-tab active" data-tab="overview" type="button" role="tab" aria-selected="true">Overview</button>
+      <button class="pzem-tab" data-tab="history" type="button" role="tab" aria-selected="false">Historical Usage</button>
+      <button class="pzem-tab" data-tab="sessions" type="button" role="tab" aria-selected="false">ON/OFF Sessions</button>
+      <button class="pzem-tab" data-tab="alerts" type="button" role="tab" aria-selected="false">Alerts</button>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="overview">
+      <dl class="pzem-overview-grid">
+        <div><dt>Communication</dt><dd id="ovPzemStatus">—</dd></div>
+        <div><dt>AC supply</dt><dd id="ovAcStatus">—</dd></div>
+      </dl>
+      <div class="dialog-chart-wrap small">
+        <canvas id="overviewLiveChart" aria-label="Live power for selected meter"></canvas>
+      </div>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="history" hidden>
+      <div class="pzem-history-controls">
+        <label for="modalHistoryRange">Time range</label>
+        <select id="modalHistoryRange">
+          <option value="1h">1 Hour</option>
+          <option value="6h">6 Hours</option>
+          <option value="12h">12 Hours</option>
+          <option value="today">Today</option>
+          <option value="yesterday">Yesterday</option>
+          <option value="7d" selected>7 Days</option>
+          <option value="30d">30 Days</option>
+        </select>
+      </div>
+      <p class="dialog-note" id="modalHistoryMessage">Loading historical data…</p>
+      <div class="pzem-history-summary" id="modalHistorySummary"></div>
+      <div class="dialog-chart-wrap">
+        <canvas id="modalHistoryChart" aria-label="Historical power for selected meter"></canvas>
+      </div>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="sessions" hidden>
+      <div class="pzem-current-session" id="modalCurrentSession"></div>
+      <h3 class="pzem-subhead">ON/OFF session history</h3>
+      <div class="pzem-session-list" id="modalSessionList"></div>
+    </div>
+
+    <div class="pzem-tab-panel" data-panel="alerts" hidden>
+      <h3 class="pzem-subhead">Alerts</h3>
+      <div class="pzem-alert-list" id="modalAlertList"></div>
+    </div>
+  </dialog>
+
+  <!-- About / project information panel (Stage 16 Info button) -->
+  <dialog class="info-dialog" id="infoDialog" aria-labelledby="infoTitle">
+    <div class="info-header">
+      <div>
+        <p class="eyebrow">PROJECT INFORMATION</p>
+        <h2 id="infoTitle">About Smart Energy Monitoring System</h2>
+      </div>
+      <button class="icon-button info-close" type="button" aria-label="Close about panel">&#215;</button>
+    </div>
+
+    <div class="info-body">
+      <section class="info-section">
+        <h3>About the Project</h3>
+        <p>The <strong>Smart Energy Monitoring System &amp; Suggestions for Energy Conservation</strong> is an
+        industrial energy-monitoring platform that brings real-time visibility and predictive insight to
+        electrical consumption across multiple circuits. ESP32-based nodes read PZEM energy meters and publish
+        readings to a centralized store, where an AI backend analyses the data for anomalies, faults, peaks,
+        forecasts, bill prediction and maintenance risk. A web dashboard presents everything live, and the
+        integrated assistant, Ask BOB, answers questions in plain language. The system helps sites cut energy
+        waste, catch faults early, and plan maintenance before failures occur.</p>
+      </section>
+
+      <section class="info-section">
+        <h3>Project Credits</h3>
+        <dl class="info-credits">
+          <div><dt>Project Guide</dt><dd>Dr. Bhupendra Kumar</dd></div>
+          <div><dt>Dashboard Designed, Developed &amp; Programmed By</dt><dd>Anshul Ninawe</dd></div>
+          <div><dt>Hardware Setup, Assembly &amp; Integration</dt><dd>
+            Yash Kawale, Yash Dahake, Swapnil Shendre, Chetan Bokade, Sanjog Godbole
+          </dd></div>
+        </dl>
+      </section>
+
+      <section class="info-section">
+        <h3>Purpose</h3>
+        <p>Centralized electrical monitoring gives operators a single, trustworthy view of where and how energy
+        is used. By combining monitoring, analysis, prediction and conservation guidance, the system turns raw
+        meter data into decisions: reducing waste, preventing downtime, and lowering bills without disrupting
+        operations.</p>
+      </section>
+
+      <section class="info-section">
+        <h3>How It Works</h3>
+        <ol class="info-flow">
+          <li><strong>PZEM Energy Meters</strong> &mdash; measure voltage, current, power, energy, power factor and frequency on each circuit.</li>
+          <li><strong>ESP32</strong> &mdash; reads the meters over the local bus and connects them to the network.</li>
+          <li><strong>Data Collection</strong> &mdash; readings are gathered and time-stamped continuously.</li>
+          <li><strong>Centralized Data Storage</strong> &mdash; all readings are stored in one place for live and historical access.</li>
+          <li><strong>AI Analysis</strong> &mdash; the backend runs detection and prediction on the stored data.</li>
+          <li><strong>Predictions &amp; Recommendations</strong> &mdash; faults, peaks, forecasts, bill estimates and saving tips are produced.</li>
+          <li><strong>Dashboard / Reports / Ask BOB</strong> &mdash; results reach operators through live views, monthly reports, and the conversational assistant.</li>
+        </ol>
+      </section>
+
+      <section class="info-section">
+        <h3>What the System Monitors</h3>
+        <ul class="info-list">
+          <li>Voltage</li>
+          <li>Current</li>
+          <li>Power</li>
+          <li>Energy</li>
+          <li>Power Factor</li>
+          <li>Frequency</li>
+          <li>Online / Offline status</li>
+        </ul>
+      </section>
+
+      <section class="info-section">
+        <h3>Main Features</h3>
+        <ul class="info-list">
+          <li>9-PZEM centralized monitoring</li>
+          <li>Real-time monitoring</li>
+          <li>Historical analysis</li>
+          <li>Real-time and historical graphs</li>
+          <li>Alerts</li>
+          <li>Anomaly detection</li>
+          <li>Fault diagnosis</li>
+          <li>Peak-load detection</li>
+          <li>Predictive maintenance indicators</li>
+          <li>Power forecasting</li>
+          <li>Bill prediction</li>
+          <li>Energy-conservation suggestions</li>
+          <li>Monthly PDF reports</li>
+          <li>Automated processing</li>
+          <li>REST API</li>
+          <li>Ask BOB</li>
+          <li>CSV export</li>
+          <li>Dark / Light theme</li>
+        </ul>
+      </section>
+
+      <section class="info-section">
+        <h3>AI Intelligence</h3>
+        <p><strong>Anomaly detection</strong> learns normal meter behaviour and flags unusual patterns that may
+        signal inefficiency or developing problems.</p>
+        <p><strong>Fault diagnosis</strong> identifies abnormal electrical conditions such as over/under-voltage
+        and over-current, associating each event with the affected PZEM.</p>
+        <p><strong>Peak-load detection</strong> finds when and where demand is highest, helping avoid stress on
+        the installation.</p>
+        <p><strong>Predictive maintenance</strong> scores each meter for risk so attention can be planned before
+        a failure, though it indicates risk rather than guaranteeing failure.</p>
+        <p><strong>Power forecasting</strong> projects near-term demand from recent trends to support planning.</p>
+        <p><strong>Bill prediction</strong> estimates upcoming cost from current consumption and tariff.</p>
+        <p><strong>Energy-conservation suggestions</strong> turn analysis into actionable recommendations.</p>
+        <p><strong>Ask BOB</strong> is the natural-language assistant that explains all of the above on demand.</p>
+      </section>
+
+      <section class="info-section">
+        <h3>Energy Conservation</h3>
+        <p>The system analyses usage patterns and provides evidence-based suggestions covering peak-load
+        reduction, idle consumption, high-power usage, high-current behaviour, power-factor conditions, and
+        predictable high-load periods. All savings are presented as <em>estimates</em> derived from measured
+        data, not guaranteed outcomes.</p>
+      </section>
+
+      <section class="info-section">
+        <h3>Fault &amp; Alert System</h3>
+        <p>The system detects abnormal electrical conditions and associates each detected event with the affected
+        PZEM meter, so operators know exactly where attention is needed. Detected conditions are surfaced as
+        warnings and, for the most serious cases, as emergency indicators within the dashboard. Indications
+        reflect the analysed data; any required physical response depends on the site's own procedures.</p>
+      </section>
+
+      <section class="info-section">
+        <h3>Advantages</h3>
+        <ul class="info-list">
+          <li>Centralized monitoring</li>
+          <li>Real-time visibility</li>
+          <li>Historical intelligence</li>
+          <li>Early abnormal-condition awareness</li>
+          <li>Predictive insights</li>
+          <li>Energy optimization</li>
+          <li>Bill estimation</li>
+          <li>Automated reporting</li>
+          <li>Natural-language interaction</li>
+        </ul>
+        <p>Together these advantages mean fewer surprises, lower operating cost, and a clearer path to
+        continuous improvement in how energy is used.</p>
+      </section>
+
+      <section class="info-section">
+        <h3>Ask BOB</h3>
+        <p>Ask BOB is the integrated AI assistant of the Smart Energy Monitoring System. It can answer project
+        questions, team and guide questions, system-operation questions, and feature or advantage questions. It
+        also answers live energy-data questions about faults, peaks, maintenance, forecasts, bill prediction and
+        energy conservation.</p>
+      </section>
+
+      <section class="info-section">
+        <h3>Current Limitations</h3>
+        <ul class="info-list">
+          <li>AI predictions and recommendations are estimates.</li>
+          <li>Long-term real-world data is required for final tuning and validation.</li>
+          <li>Predictive maintenance indicates risk and does not guarantee equipment failure.</li>
+          <li>Production deployment requires additional security hardening.</li>
+        </ul>
+      </section>
+
+      <section class="info-section">
+        <h3>Future Scope</h3>
+        <ul class="info-list">
+          <li>Long-term real-data validation</li>
+          <li>Improved predictive analytics</li>
+          <li>Stronger forecasting</li>
+          <li>Improved maintenance intelligence</li>
+          <li>Mobile application</li>
+          <li>Production deployment and security hardening</li>
+          <li>Long-term data analysis</li>
+        </ul>
+      </section>
+    </div>
+  </dialog>
+
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+  <script src="firebase-config.js"></script>
+  <script src="script.js?v=11"></script>
+
+  <!-- Ask BOB floating assistant -->
+  <button id="bobFab" class="bob-fab" type="button" aria-label="Open Ask BOB"
+          aria-expanded="false" aria-controls="bobPanel">
+    <img src="assets/bob-avatar.png" alt="BOB AI Energy Assistant" class="bob-fab-avatar">
+    <span class="bob-fab-label">ASK BOB</span>
+  </button>
+
+  <section id="bobPanel" class="bob-panel" role="dialog" aria-modal="false"
+           aria-labelledby="bobTitle" aria-describedby="bobSubtitle" hidden>
+    <header class="bob-header">
+      <img src="assets/bob-avatar.png" alt="BOB AI Energy Assistant" class="bob-header-avatar">
+      <div class="bob-header-text">
+        <strong id="bobTitle">Ask BOB</strong>
+        <span class="bob-subtitle" id="bobSubtitle">AI Energy Assistant</span>
+        <span class="bob-status"><i class="bob-dot" aria-hidden="true"></i> Ready</span>
+      </div>
+      <button id="bobClose" class="bob-close" type="button" aria-label="Close Ask BOB">×</button>
+    </header>
+
+    <div id="bobMessages" class="bob-messages" aria-live="polite"></div>
+
+    <div id="bobSuggestions" class="bob-suggestions" aria-label="Suggested questions">
+      <button class="bob-chip" type="button" data-q="Which PZEM uses most power?">Which PZEM uses most power?</button>
+      <button class="bob-chip" type="button" data-q="Any recent faults?">Any recent faults?</button>
+      <button class="bob-chip" type="button" data-q="What is my predicted bill?">What is my predicted bill?</button>
+      <button class="bob-chip" type="button" data-q="Tell me about this project.">Tell me about this project.</button>
+    </div>
+
+    <form id="bobForm" class="bob-input-row">
+      <input id="bobInput" class="bob-input" type="text" placeholder="Ask about your energy..."
+             aria-label="Ask BOB a question" autocomplete="off">
+      <button id="bobSend" class="bob-send" type="submit" aria-label="Send message">→</button>
+    </form>
+  </section>
+
+  <script src="bob.js?v=2"></script>
+</body>
+</html>

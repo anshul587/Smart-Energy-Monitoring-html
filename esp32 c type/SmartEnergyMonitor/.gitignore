@@ -1,0 +1,17 @@
+# Credentials
+config.h
+credentials_local.h
+
+# Build
+build/
+*.bin
+*.elf
+
+# IDE
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

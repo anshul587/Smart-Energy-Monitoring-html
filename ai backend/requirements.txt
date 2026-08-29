@@ -1,0 +1,16 @@
+# --- Stage 1: data loading ---
+firebase-admin>=6.5.0
+pandas>=2.2.0
+pyarrow>=16.0.0          # parquet engine used by data_loader's on-disk cache
+python-dotenv>=1.0.1
+pytest>=8.0.0            # missed in the original Stage 1 requirements.txt
+
+# --- Stage 3: anomaly detection ---
+numpy>=1.26.0
+scikit-learn>=1.4.0      # Isolation Forest anomaly detection
+
+# --- Later stages (declared now so one requirements.txt covers the whole
+#     project as it grows; unused until those stages land) ---
+statsmodels>=0.14.0      # Stage 9: Holt-Winters / exponential smoothing forecast
+anthropic>=0.34.0        # Stage 16: Claude API for BOB
+flask>=3.0.0             # backend/app.py — see README for Flask-vs-FastAPI note

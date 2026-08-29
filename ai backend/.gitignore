@@ -1,0 +1,22 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+secrets/
+!package.json
+
+# Local data cache (regenerable from Firebase, not source of truth)
+.cache/
+*.parquet
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Temporary files
+*.log
+*.err
+.scheduler_state.json
