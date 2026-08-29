@@ -14,3 +14,4 @@ scikit-learn>=1.4.0      # Isolation Forest anomaly detection
 statsmodels>=0.14.0      # Stage 9: Holt-Winters / exponential smoothing forecast
 anthropic>=0.34.0        # Stage 16: Claude API for BOB
 flask>=3.0.0             # backend/app.py — see README for Flask-vs-FastAPI note
+gunicorn>=22.0.0         # Production WSGI server for Render
