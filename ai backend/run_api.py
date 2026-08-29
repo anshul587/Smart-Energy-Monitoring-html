@@ -9,17 +9,20 @@ results.
 
 No authentication is configured. Local/development use only. See the security
 notes in /api/v1/openapi.json before exposing this service.
+
+Gunicorn:  gunicorn run_api:app
 """
 
 from __future__ import annotations
 
 import os
 
+from ai.api_server import create_app
+
+app = create_app()
+
 
 def main() -> int:
-    from ai.api_server import create_app
-
-    app = create_app()
     app.run(
         host=os.environ.get("API_HOST", "127.0.0.1"),
         port=int(os.environ.get("API_PORT", "8000")),
