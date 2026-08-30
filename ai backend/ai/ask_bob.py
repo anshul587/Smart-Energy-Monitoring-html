@@ -427,6 +427,17 @@ def _project_response(question: str, k: dict) -> str:
         return ("The hardware setup, assembly and integration was handled by: "
                 + ", ".join(ht) + ".")
 
+    # "Who is [Name]?" for team members
+    if re.search(r"who is (anshul|yash|swapnil|chetan|sanjog)", q):
+        name_match = re.search(r"who is (anshul|yash|swapnil|chetan|sanjog)", q)
+        if name_match:
+            name = name_match.group(1).title()
+            if name == "Anshul":
+                return f"{name} Ninawe is the developer who designed, developed and programmed this dashboard and system."
+            elif name in ["Yash", "Swapnil", "Chetan", "Sanjog"]:
+                return f"{name} is a team member who worked on the hardware setup and integration."
+        return _NO_INFO
+
     if re.search(r"who made|who built|who created|developer|developed|team member|team\b", q):
         members = ", ".join(team)
         return (f"This project was designed and developed by {dev} with team members "
