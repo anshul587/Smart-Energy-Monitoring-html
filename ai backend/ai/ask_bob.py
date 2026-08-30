@@ -69,7 +69,7 @@ _CASUAL_HINTS = re.compile(
     r"|how are you|who are you|what can you do|\b(thanks|thank you|ty)\b"
     r"|\b(bye|goodbye|see you)\b"
     r"|what is (ai|artificial intelligence|iot|internet of things|energy efficiency)"
-    r"|explain|tell me (something|about)"
+    r"|explain|tell me something"
     r"|why is .* important"
     r"|interesting", re.I)
 
