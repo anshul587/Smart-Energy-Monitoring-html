@@ -392,7 +392,7 @@ def _llm_general_conversation(question: str, history: list, api_key: str) -> Opt
 _NO_INFO = "I don't have verified information about that part of the project."
 
 _INTRO = (
-    "The Smart Energy Monitoring System is an industrial energy-monitoring platform built by "
+    "The Smart Energy Monitoring System is an energy-monitoring platform built by "
     "Anshul Ninawe with team members Yash Kawale, Yash Dahake, Swapnil Shendre, "
     "Chetan Bokade, and Sanjog Godbole. ESP32 boards poll PZEM energy meters across 9 "
     "circuits and publish readings to Firebase; a Python AI backend analyses the data "
@@ -705,7 +705,7 @@ def _llm_compose_energy(question: str, results: dict, history: list, api_key: st
     try:
         system = (
             "You are BOB, the conversational AI assistant for the Smart Monitoring System, "
-            "an industrial energy-monitoring project. Answer naturally and professionally. "
+            "an energy-monitoring project. Answer naturally and professionally. "
             "Use ONLY the provided verified tool-data JSON. Never invent meter readings, "
             "faults, predictions, timestamps, savings, or project facts. When quoting data, "
             "include the PZEM number, value and timestamp as evidence. If the data is empty "

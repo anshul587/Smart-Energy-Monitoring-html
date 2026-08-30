@@ -18,8 +18,8 @@
     "Chetan Bokade",
     "Sanjog Godbole"
   ],
-  "purpose": "Provide real-time visibility and predictive insight into industrial energy consumption across multiple circuits, so operators can reduce waste, catch faults early, and plan maintenance.",
-  "problem_solved": "Industrial sites often lack per-circuit energy visibility. Manual meter reading is slow and error-prone, faults are noticed only after downtime, and there is no forecasting or maintenance planning. This system automates metering, anomaly/fault detection, peak and forecast analysis, and reporting.",
+  "purpose": "Provide real-time visibility and predictive insight into energy consumption across multiple circuits, so operators can reduce waste, catch faults early, and plan maintenance.",
+  "problem_solved": "Sites often lack per-circuit energy visibility. Manual meter reading is slow and error-prone, faults are noticed only after downtime, and there is no forecasting or maintenance planning. This system automates metering, anomaly/fault detection, peak and forecast analysis, and reporting.",
   "architecture": "PZEM energy meters are polled by ESP32 microcontrollers and published to Firebase Realtime Database. A Python AI backend reads the data, runs analysis stages (anomaly detection, fault diagnosis, peak detection, forecasting, bill prediction, maintenance risk, energy-saving recommendations), and writes results back. The web dashboard subscribes to live meter data and reads AI results through a read-only REST API, presenting everything in one interface.",
   "data_flow": "PZEM meter measures voltage/current/power/energy/frequency -> ESP32 reads it -> published to Firebase RTDB (meters/ and history/) -> dashboard shows live readings and the AI backend processes them -> AI results written to ai/* in Firebase -> dashboard and Ask BOB read those results via the REST API.",
   "hardware": "ESP32 Wi-Fi microcontrollers and PZEM energy meters (PZEM-004T / PZEM-016 style) measuring voltage, current, active power, energy and frequency, across 9 monitored circuits. Non-intrusive clamp-style current sensing avoids rewiring panels.",
