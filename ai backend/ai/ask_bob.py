@@ -777,6 +777,24 @@ def ask_bob(question: str, history: Optional[list] = None) -> dict[str, Any]:
                 "source": "mixed", "intent": "project+energy"}
 
     # ---------------------------------------------------------
+    # MIXED: Casual + Project knowledge
+    # ---------------------------------------------------------
+    if is_casual and is_project:
+        casual_part = _casual_response(question) if not has_llm else None
+        project_part = _project_response(resolved, _KNOWLEDGE)
+        if has_llm:
+            # Use LLM to compose natural mixed response
+            ans = _llm_general_conversation(resolved, history, api_key)
+            if ans:
+                return {"status": "ok", "answer": ans, "source": "llm", "intent": "casual+project"}
+        # Fallback: compose manually
+        if casual_part and project_part != _NO_INFO:
+            return {"status": "ok", "answer": f"{casual_part}\n\n{project_part}",
+                    "source": "mixed", "intent": "casual+project"}
+        elif project_part != _NO_INFO:
+            return {"status": "ok", "answer": project_part, "source": "project", "intent": "project"}
+
+    # ---------------------------------------------------------
     # LIVE ENERGY DATA only
     # ---------------------------------------------------------
     if is_energy or (is_followup and not is_casual and not is_project):
