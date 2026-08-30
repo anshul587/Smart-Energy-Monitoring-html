@@ -1,18 +1,19 @@
 """
 ai/ask_bob.py
 -------------
-Stage 16 (enhanced): Ask BOB as a data-aware AI agent.
+Stage 16 (enhanced): Ask BOB as a genuinely conversational AI agent.
 
-Flow:
-  User question
-    -> intent routing (casual / project / energy / mixed)
-    -> for energy: select the minimum required registered tools
-    -> call the Stage 15 read layer through ai.bob_tools (verified data)
-    -> compose an answer from that data (Claude if configured, else rules)
+Three-layer response architecture:
+  A. GENERAL CONVERSATION — natural, ChatGPT-like responses for greetings,
+     casual chat, general knowledge, follow-ups. Uses LLM when configured,
+     deterministic fallback otherwise.
+  B. VERIFIED PROJECT KNOWLEDGE — authoritative facts from project_knowledge.json.
+     Never invented. Covers: team, guide, purpose, architecture, hardware, etc.
+  C. VERIFIED LIVE ENERGY DATA — current sensor values, faults, forecasts, bills,
+     maintenance, energy-saving. Only via registered bob_tools. Never fabricated.
 
-The agent can only invoke the registered, validated tools in ai.bob_tools — it
-never touches Firebase, SQL, the filesystem, or arbitrary URLs directly, and the
-LLM only ever sees verified tool output (it never calls tools itself).
+Routing is lightweight and semantic. No fixed question list. Mixed questions
+(project + live, casual + project, etc.) are composed naturally.
 
 Public contract unchanged: ask_bob(question, history) returns
 {"status","answer","source","intent"}, and the /api/v1/ask endpoint is untouched.
@@ -32,11 +33,7 @@ from .config import get_settings
 
 logger = logging.getLogger("ai.ask_bob")
 
-_PROJECT_ROOT = str(Path(__file__).resolve().parents[1])
 _KNOWLEDGE_PATH = Path(__file__).resolve().parent / "project_knowledge.json"
-
-_SYSTEM_PZEM_COUNT = 9  # fallback only; real count comes from build_summary
-
 
 # ---------------------------------------------------------------------------
 # Knowledge + credentials
@@ -63,37 +60,79 @@ def _get_api_key() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Intent detection
+# Semantic intent classification (lightweight, no giant keyword dict)
 # ---------------------------------------------------------------------------
 
-_CASUAL_RE = re.compile(
-    r"\b(hi|hello|hey|howdy|good morning|good afternoon|good evening)\b"
+# Pre-compiled patterns for fast routing hints (not exhaustive filters)
+_CASUAL_HINTS = re.compile(
+    r"\b(hi|hello|hey|howdy|good\s+(morning|afternoon|evening|night))\b"
     r"|how are you|who are you|what can you do|\b(thanks|thank you|ty)\b"
-    r"|\b(bye|goodbye|see you)\b", re.I)
+    r"|\b(bye|goodbye|see you)\b"
+    r"|what is (ai|artificial intelligence|iot|internet of things|energy efficiency)"
+    r"|explain|tell me (something|about)"
+    r"|why is .* important"
+    r"|interesting", re.I)
 
-_PROJECT_RE = re.compile(
-    r"project|team member|team|developer|developed|who made|who built|who created"
+_PROJECT_HINTS = re.compile(
+    r"project|team member|team|developer|developed|who (made|built|created|programm|designed)"
     r"|purpose|problem|architecture|how does it work|how it works|how does the system"
-    r"|explain|hardware|software|tech stack|technolog|ai feature|ai capabilit"
+    r"|explain.*(project|system)|hardware|software|tech stack|technolog|ai feature|ai capabilit"
     r"|advantage|capabilit|feature|\bdashboard\b|data flow|esp32|firebase|rest api"
-    r"|ai backend|offline|introduction|designed and developed", re.I)
+    r"|ai backend|offline|introduction|designed and developed"
+    r"|guide|supervisor|Anshul|Yash|Swapnil|Chetan|Sanjog", re.I)
 
-_ENERGY_RE = re.compile(
+_ENERGY_HINTS = re.compile(
     r"pzem\s*_?\s*\d+|meter\s*_?\s*\d+|power|fault|peak|forecast|bill|maintenance|needs attention"
-    r"|save energy|energy saving|anomal|consumption|usage|voltage|current"
-    r"|energy|watt|kW|offline|status|system status|condition|report|monthly", re.I)
+    r"|save energy|energy saving|energy-saving|recommend|reduce|lower.*bill|cut energy"
+    r"|save electricity|save power|anomal|consumption|usage|voltage|current"
+    r"|energy|watt|kw|offline|status|condition|report|monthly|which (pzem|meter)"
+    r"|most power|highest|compare|comparison|rank|consuming|using|draw|load"
+    r"|how much|how many", re.I)
+
+_FOLLOWUP_HINTS = re.compile(
+    r"^(why|how|what|when|where|who|which|how much|how many|tell me more|more|how much)"
+    r"|^(and|but|also|then|so)"
+    r"|^(it|he|she|they|that|this)\b", re.I)
 
 
-def _detect(question: str) -> dict:
+def _detect_intent(question: str, history: list) -> dict[str, bool]:
+    """Lightweight semantic intent detection. Returns flags for each layer."""
     q = question.strip()
+    q_lower = q.lower()
+
+    # Check for follow-up first (short, context-dependent)
+    is_followup = bool(
+        _FOLLOWUP_HINTS.search(q_lower)
+        and len(q) < 80
+        and history
+    )
+
+    # Primary intent hints
+    casual = bool(_CASUAL_HINTS.search(q))
+    project = bool(_PROJECT_HINTS.search(q))
+    energy = bool(_ENERGY_HINTS.search(q))
+
+    # Follow-ups inherit energy/project context from history
+    if is_followup and not (casual or project or energy):
+        last_q = ""
+        for turn in reversed(history):
+            if turn.get("role") == "user":
+                last_q = turn.get("content", "")
+                break
+        if last_q:
+            casual |= bool(_CASUAL_HINTS.search(last_q))
+            project |= bool(_PROJECT_HINTS.search(last_q))
+            energy |= bool(_ENERGY_HINTS.search(last_q))
+
     return {
-        "casual": bool(_CASUAL_RE.search(q)),
-        "project": bool(_PROJECT_RE.search(q)),
-        "energy": bool(_ENERGY_RE.search(q)),
+        "casual": casual,
+        "project": project,
+        "energy": energy,
+        "followup": is_followup,
     }
 
 
-def _last_pzem(history: list) -> Optional[int]:
+def _last_mentioned_pzem(history: list) -> Optional[int]:
     if not history:
         return None
     text = " ".join(str(t.get("content", "")) for t in history)
@@ -120,24 +159,34 @@ def _pzem_from_text(text: str) -> Optional[int]:
 
 
 def _resolve_followup(question: str, history: list) -> str:
+    """Enrich short follow-up questions with context from history."""
     q = question.strip()
     if re.search(r"pzem\s*_?\s*\d+|meter\s*_?\s*\d+", q, re.I) or not history:
         return q
-    if re.match(r"^(how much|how many|which one|what about|and|why|how|more|"
-                r"tell me more|who|what|when|where)\b", q, re.I) and len(q) < 60:
-        pz = _last_pzem(history)
+
+    # Short follow-up that likely refers to previous context
+    if _FOLLOWUP_HINTS.search(q) and len(q) < 80:
+        pz = _last_mentioned_pzem(history)
         if pz:
-            return f"What is the power and energy of PZEM {pz}? (follow-up: {q})"
+            return f"Regarding PZEM {pz}: {q}"
+        # Check if last bot answer mentioned a specific meter
+        for turn in reversed(history):
+            if turn.get("role") == "bot":
+                content = turn.get("content", "")
+                pz = _pzem_from_text(content)
+                if pz:
+                    return f"Regarding PZEM {pz}: {q}"
+                break
     return q
 
 
 # ---------------------------------------------------------------------------
-# Tool selection (deterministic; picks the minimum required tools)
+# Tool selection (deterministic; picks minimum required tools)
 # ---------------------------------------------------------------------------
 
 def _select_tools(question: str, history: list) -> list[tuple[str, dict]]:
     q = question.lower()
-    pz = _pzem_from_text(q) or _last_pzem(history)
+    pz = _pzem_from_text(q) or _last_mentioned_pzem(history)
     plan: list[tuple[str, dict]] = []
 
     def add(name: str, **params: Any) -> None:
@@ -162,13 +211,14 @@ def _select_tools(question: str, history: list) -> list[tuple[str, dict]]:
     want_maint = has("maintenance", "risk", "attention", "watch", "health", "degrade")
     want_status = has("status", "summary", "overview", "how is", "how's", "how are the",
                       "condition", "system health", "state of", "system status")
-    want_reading = has("voltage", "current", "reading", "offline", "online", "frequency")
+    want_reading = has("voltage", "current", "reading", "offline", "online", "frequency",
+                       "how much", "how many")
     compare = has("most power", "highest", "uses most", "which pzem", "which meter",
                   "consume more", "consuming more", "more than", "compare", "comparison",
                   "all meter", "all meters", "rank", "difference between", "difference")
     want_power = has("power", "consum", "usage", "using", "watt", "kw", "electricity",
-                     "load", "energy used", "draw")
-    if compare:  # comparing meters is fundamentally a power/usage question
+                     "load", "energy used", "draw", "how much", "how many")
+    if compare:
         want_power = True
     reason_why = has("why", "reason", "consuming more", "using more", "more power",
                      "higher power", "what happened", "happened", "what's wrong",
@@ -254,51 +304,116 @@ def _ok_results(ctx: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Casual responses
+# Layer A: General Conversation (LLM + deterministic fallback)
 # ---------------------------------------------------------------------------
+
+_CASUAL_RESPONSES = {
+    "greeting": (
+        "Hi! I'm BOB, your energy monitoring assistant. Ask me about your "
+        "PZEM meters, faults, forecasts, bills, or energy-saving recommendations."
+    ),
+    "how_are_you": "I'm running well, thanks for asking! I'm here to help you understand your energy system.",
+    "who_are_you": (
+        "I'm BOB, the AI assistant for the Smart Energy Monitoring System. I can explain "
+        "the project, answer questions about your PZEM meters, faults, forecasts, "
+        "bills, and energy-saving opportunities."
+    ),
+    "what_can_you_do": (
+        "I can help you understand your energy data, PZEM status, faults, peaks, "
+        "maintenance risk, forecasts, bill predictions, and energy-saving "
+        "opportunities. I can also tell you about this project and the team behind it."
+    ),
+    "thanks": "You're welcome!",
+    "goodbye": "Goodbye! Reach out anytime you need help with your energy data.",
+    "default": (
+        "Hi! I'm BOB, your energy monitoring assistant. How can I help?"
+    ),
+}
+
+
+def _classify_casual(question: str) -> str:
+    q = question.strip().lower()
+    if re.search(r"\b(hi|hello|hey|howdy|good\s+(morning|afternoon|evening|night))\b", q):
+        return "greeting"
+    if "how are you" in q:
+        return "how_are_you"
+    if "who are you" in q:
+        return "who_are_you"
+    if "what can you do" in q:
+        return "what_can_you_do"
+    if re.search(r"thanks|thank you", q):
+        return "thanks"
+    if re.search(r"bye|goodbye|see you", q):
+        return "goodbye"
+    return "default"
+
 
 def _casual_response(question: str) -> str:
-    q = question.strip().lower()
-    if re.search(r"\b(hi|hello|hey|howdy|good morning|good afternoon|good evening)\b", q):
-        return ("Hi! I'm BOB, your energy monitoring assistant. Ask me about your "
-                "PZEM meters, faults, forecasts, bills, or energy-saving recommendations.")
-    if "how are you" in q:
-        return "I'm running well, thanks for asking! I'm here to help you understand your energy system."
-    if "who are you" in q:
-        return ("I'm BOB, the AI assistant for the Smart Monitoring System. I can explain "
-                "the project, answer questions about your PZEM meters, faults, forecasts, "
-                "bills, and energy-saving opportunities.")
-    if "what can you do" in q:
-        return ("I can help you understand your energy data, PZEM status, faults, peaks, "
-                "maintenance risk, forecasts, bill predictions, and energy-saving "
-                "opportunities. I can also tell you about this project and the team behind it.")
-    if re.search(r"thanks|thank you", q):
-        return "You're welcome!"
-    if re.search(r"bye|goodbye|see you", q):
-        return "Goodbye! Reach out anytime you need help with your energy data."
-    return "Hi! I'm BOB, your energy monitoring assistant. How can I help?"
+    """Deterministic fallback for casual conversation when LLM unavailable."""
+    return _CASUAL_RESPONSES[_classify_casual(question)]
+
+
+def _llm_general_conversation(question: str, history: list, api_key: str) -> Optional[str]:
+    """Use LLM for natural general conversation. Only for non-project, non-energy topics."""
+    try:
+        import anthropic
+    except ImportError:
+        return None
+    try:
+        system = (
+            "You are BOB, a friendly and knowledgeable AI assistant for the Smart Energy Monitoring System. "
+            "Answer naturally and conversationally. Keep responses concise (under 150 words). "
+            "You can discuss general topics: greetings, how things work, energy concepts, IoT, AI, etc. "
+            "Do NOT invent project-specific facts, sensor values, team members, or hardware specs. "
+            "If asked about the project, meters, or live data, say you'll check the verified sources. "
+            "Be helpful, concise, and natural."
+        )
+        messages = []
+        for turn in (history or [])[-4:]:
+            role = "assistant" if turn.get("role") == "bot" else "user"
+            content = turn.get("content", "")
+            if content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": question})
+        client = anthropic.Anthropic(api_key=api_key)
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+        resp = client.messages.create(model=model, max_tokens=400, system=system, messages=messages)
+        answer = "".join(getattr(b, "text", "") for b in resp.content).strip()
+        return answer or None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Ask BOB LLM general conversation failed; using fallback: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
-# Project responses (authoritative, from knowledge)
+# Layer B: Verified Project Knowledge (authoritative, from knowledge)
 # ---------------------------------------------------------------------------
 
 _NO_INFO = "I don't have verified information about that part of the project."
 
 _INTRO = (
-    "The Smart Monitoring System is an industrial energy-monitoring platform built by "
+    "The Smart Energy Monitoring System is an industrial energy-monitoring platform built by "
     "Anshul Ninawe with team members Yash Kawale, Yash Dahake, Swapnil Shendre, "
     "Chetan Bokade, and Sanjog Godbole. ESP32 boards poll PZEM energy meters across 9 "
     "circuits and publish readings to Firebase; a Python AI backend analyses the data "
     "for anomalies, faults, peaks, forecasts, bill prediction and maintenance risk, and "
     "a web dashboard shows it all live. It helps sites cut energy waste, catch faults "
-    "early, and plan maintenance.")
+    "early, and plan maintenance."
+)
 
 
 def _project_response(question: str, k: dict) -> str:
     q = question.lower()
     team = k.get("team_members", [])
     dev = k.get("dashboard_developer") or k.get("developer", "Anshul Ninawe")
+
+    # "Who built/created YOU?" — distinguish assistant from project
+    if re.search(r"who (built|created|developed|made) you\b", q):
+        return (
+            "I'm BOB, the AI assistant integrated into the Smart Energy Monitoring System. "
+            "This project and dashboard were designed, developed and programmed by Anshul Ninawe. "
+            "The underlying AI model is provided by Anthropic (Claude)."
+        )
 
     if re.search(r"project guide|project supervisor|guide\b", q):
         return f"The project guide is {k.get('project_guide', _NO_INFO)}."
@@ -343,17 +458,18 @@ def _project_response(question: str, k: dict) -> str:
     if "offline" in q:
         return k.get("offline_behavior", _NO_INFO)
     if re.search(r"how many pzem|pzem.*used|pzem.*count|number of.*pzem", q):
-        return f"The system monitors {k.get('pzem_count', _SYSTEM_PZEM_COUNT)} PZEM energy meters."
+        return f"The system monitors {k.get('pzem_count', 9)} PZEM energy meters."
     if re.search(r"introduction|about (this|your|the) project|tell me about|describe|summar"
                  r"|what is (this|the) project|explain (this|the) project", q):
         return _INTRO
     if re.search(r"limitation|drawback|weakness", q):
         return k.get("limitations", _NO_INFO)
+
     return _NO_INFO
 
 
 # ---------------------------------------------------------------------------
-# Verified-data composer (deterministic, evidence-based)
+# Layer C: Verified Live Energy Data (deterministic, evidence-based)
 # ---------------------------------------------------------------------------
 
 def _fmt_ts(ms: Any) -> str:
@@ -552,7 +668,8 @@ def _has_data(v: Any) -> bool:
     return v is not None
 
 
-def _compose(question: str, results: dict) -> str:
+def _compose_energy(question: str, results: dict) -> str:
+    """Deterministic composer for live energy data."""
     results = {k: v for k, v in results.items() if _has_data(v)}
     if not results:
         return "I don't have enough current data to answer that."
@@ -568,11 +685,8 @@ def _compose(question: str, results: dict) -> str:
     return " ".join(pieces)
 
 
-# ---------------------------------------------------------------------------
-# LLM (server-side, optional) — composes from verified tool data only
-# ---------------------------------------------------------------------------
-
-def _llm_compose(question: str, results: dict, history: list, api_key: str) -> Optional[str]:
+def _llm_compose_energy(question: str, results: dict, history: list, api_key: str) -> Optional[str]:
+    """LLM composes natural answer from verified tool data only."""
     try:
         import anthropic
     except ImportError:
@@ -606,8 +720,12 @@ def _llm_compose(question: str, results: dict, history: list, api_key: str) -> O
         return None
 
 
+# Backward-compat alias for tests
+_llm_compose = _llm_compose_energy
+
+
 # ---------------------------------------------------------------------------
-# Orchestration
+# Orchestration: Three-layer architecture
 # ---------------------------------------------------------------------------
 
 def ask_bob(question: str, history: Optional[list] = None) -> dict[str, Any]:
@@ -616,50 +734,83 @@ def ask_bob(question: str, history: Optional[list] = None) -> dict[str, Any]:
         return {"status": "error", "error": {"code": "empty_question",
                 "message": "Please enter a question."}, "answer": None}
 
-    resolved = _resolve_followup(question, history or [])
-    flags = _detect(resolved)
-    is_energy = flags["energy"] or "follow-up" in resolved.lower()
-    is_project = flags["project"]
-    is_casual = flags["casual"]
+    history = history or []
+    resolved = _resolve_followup(question, history)
+    flags = _detect_intent(resolved, history)
 
-    # Mixed: project knowledge + verified live data.
+    is_casual = flags["casual"]
+    is_project = flags["project"]
+    is_energy = flags["energy"]
+    is_followup = flags["followup"]
+
+    api_key = _get_api_key()
+    has_llm = bool(api_key)
+
+    # ---------------------------------------------------------
+    # MIXED: Project knowledge + Live energy data
+    # ---------------------------------------------------------
     if is_project and is_energy:
         project_part = _project_response(resolved, _KNOWLEDGE)
-        ctx = _run_plan(_select_tools(resolved, history or []))
+        ctx = _run_plan(_select_tools(resolved, history))
         results = _ok_results(ctx)
-        api_key = _get_api_key()
-        if api_key and results:
-            energy_part = _llm_compose(resolved, results, history or [], api_key) or _compose(resolved, results)
+
+        if has_llm and results:
+            energy_part = _llm_compose_energy(resolved, results, history, api_key) or _compose_energy(resolved, results)
         else:
-            energy_part = _compose(resolved, results)
+            energy_part = _compose_energy(resolved, results)
+
         if not energy_part.strip():
             energy_part = "I don't have enough current data to answer that."
+
         return {"status": "ok", "answer": f"{project_part}\n\n{energy_part}",
                 "source": "mixed", "intent": "project+energy"}
 
-    # Energy / live data.
-    if is_energy:
-        ctx = _run_plan(_select_tools(resolved, history or []))
+    # ---------------------------------------------------------
+    # LIVE ENERGY DATA only
+    # ---------------------------------------------------------
+    if is_energy or (is_followup and not is_casual and not is_project):
+        ctx = _run_plan(_select_tools(resolved, history))
         results = _ok_results(ctx)
-        api_key = _get_api_key()
-        if api_key and results:
-            ans = _llm_compose(resolved, results, history or [], api_key)
+
+        if has_llm and results:
+            ans = _llm_compose_energy(resolved, results, history, api_key)
             if ans:
                 return {"status": "ok", "answer": ans, "source": "llm", "intent": "energy"}
-        return {"status": "ok", "answer": _compose(resolved, results),
+
+        return {"status": "ok", "answer": _compose_energy(resolved, results),
                 "source": "tool", "intent": "energy"}
 
-    # Project knowledge only.
+    # ---------------------------------------------------------
+    # PROJECT KNOWLEDGE only
+    # ---------------------------------------------------------
     if is_project:
-        return {"status": "ok", "answer": _project_response(resolved, _KNOWLEDGE),
-                "source": "project", "intent": "project"}
+        answer = _project_response(resolved, _KNOWLEDGE)
+        if answer == _NO_INFO:
+            # Not in knowledge base - try LLM for general knowledge if available
+            if has_llm:
+                ans = _llm_general_conversation(resolved, history, api_key)
+                if ans:
+                    return {"status": "ok", "answer": ans, "source": "llm", "intent": "general"}
+            return {"status": "ok", "answer": _NO_INFO, "source": "project", "intent": "project"}
+        return {"status": "ok", "answer": answer, "source": "project", "intent": "project"}
 
-    # Casual.
-    if is_casual:
+    # ---------------------------------------------------------
+    # GENERAL CONVERSATION (casual, general knowledge)
+    # ---------------------------------------------------------
+    if is_casual or not (is_project or is_energy):
+        # Try LLM first for natural conversation
+        if has_llm:
+            ans = _llm_general_conversation(resolved, history, api_key)
+            if ans:
+                return {"status": "ok", "answer": ans, "source": "llm", "intent": "casual"}
+
+        # Deterministic fallback
         return {"status": "ok", "answer": _casual_response(question),
                 "source": "casual", "intent": "casual"}
 
-    # Unmatched: safe, non-fabricating helper.
+    # ---------------------------------------------------------
+    # Should not reach here, but safe fallback
+    # ---------------------------------------------------------
     return {"status": "ok",
             "answer": ("I'm BOB, your energy assistant. I can answer questions about your "
                        "PZEM meters, faults, forecasts, bills and energy saving, or tell you "
