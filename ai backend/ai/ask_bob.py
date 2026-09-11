@@ -385,8 +385,11 @@ def _llm_general_conversation(question: str, history: list, api_key: str, provid
                 api_key=api_key,
             )
             model = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
-            resp = client.models.create(model=model, max_tokens=400, system=system, messages=messages)  # type: ignore
-            answer = "".join(getattr(b, "text", "") for b in resp.choices).strip()
+            sys_msg = {"role": "system", "content": system}
+            user_msgs = [msg for msg in messages if msg.get("role") == "user"]
+            combined = [sys_msg] + user_msgs if user_msgs else [sys_msg] + messages
+            resp = client.chat.completions.create(model=model, max_tokens=400, messages=combined)  # type: ignore
+            answer = resp.choices[0].message.content.strip()
         else:
             # anthropic fallback
             import anthropic  # type: ignore
@@ -742,15 +745,18 @@ def _llm_compose_energy(question: str, results: dict, history: list, api_key: st
                 api_key=api_key,
             )
             model = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
-            resp = client.models.create(model=model, max_tokens=500, system=system, messages=messages)  # type: ignore
-            answer = "".join(getattr(b, "text", "") for b in resp.choices).strip()
+            sys_msg = {"role": "system", "content": system}
+            user_msgs = [msg for msg in messages if msg.get("role") == "user"]
+            combined = [sys_msg] + user_msgs if user_msgs else [sys_msg] + messages
+            resp = client.chat.completions.create(model=model,max_tokens=500, messages=combined)  # type: ignore
+            answer = resp.choices[0].message.content.strip()
         else:
             # anthropic fallback
             import anthropic  # type: ignore
             client = anthropic.Anthropic(api_key=api_key)
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
             resp = client.messages.create(model=model, max_tokens=500, system=system, messages=messages)
-            answer = "".join(getattr(b, "text", "") for b in resp.content).strip()
+            answer = resp.content[0].text.strip()
         return answer or None
     except Exception as exc:  # noqa: BLE001
         logger.warning("Ask BOB Claude compose failed; using deterministic path: %s", exc)
