@@ -1,0 +1,1 @@
+python -m http.server 5500 -d "E:\smart energy monitoring sys\Dashboard Smart-Monitoring-System"

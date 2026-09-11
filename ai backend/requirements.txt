@@ -12,6 +12,7 @@ scikit-learn>=1.4.0      # Isolation Forest anomaly detection
 # --- Later stages (declared now so one requirements.txt covers the whole
 #     project as it grows; unused until those stages land) ---
 statsmodels>=0.14.0      # Stage 9: Holt-Winters / exponential smoothing forecast
-anthropic>=0.34.0        # Stage 16: Claude API for BOB
+anthropic>=0.34.0        # Stage 16: optional — BOB primarily uses OpenRouter FREE
+openai>=1.0.0          # OpenAI-compatible client for OpenRouter FREE LLM provider
 flask>=3.0.0             # backend/app.py — see README for Flask-vs-FastAPI note
 gunicorn>=22.0.0         # Production WSGI server for Render

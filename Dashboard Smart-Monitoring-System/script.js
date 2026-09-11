@@ -11,6 +11,11 @@ let metersData = {};
 
 // Debug flag - set to true in console to enable verbose logging: localStorage.debug = 'true'
 const DEBUG = localStorage.getItem("debug") === "true";
+// Data source: "live" reads from history/pzem_N/ (firmware-written)
+// "synthetic" reads from ai/synthetic_history/pzem_N/ (seed script)
+// Default: "live" — never the permanent production default.
+const DATA_SOURCE = localStorage.getItem("data_source") || "live";
+
 let powerHistoryMode = false;
 let historyRequestId = 0;
 let selectedPzem = "all"; // "all" or 1-9
@@ -487,6 +492,117 @@ function normalizePowerWatts(source) {
   return Number.isFinite(watts) ? watts : 0;
 }
 
+/* Classify a PZEM reading based on data validation rules.
+   Returns { status: 'VALID' | 'SUSPICIOUS' | 'INVALID', issues: string[] }
+   Does NOT modify the original data. Callers should log warnings for
+   SUSPICIOUS/INVALID records and/or sanitize values before displaying. */
+const VALIDATION_RULES = {
+  maxPowerW: 10000,
+  voltageRange: [180, 250],
+  maxCurrentA: 50,
+  minCurrentA: 0,
+  frequencyRange: [49.5, 51.5],
+  pfRange: [0.0, 1.0],
+  minEnergy: 0,
+};
+
+/* Normalizes a possibly-string numeric value from Firebase.
+   Returns a finite number if the value is parseable, otherwise null. */
+function _norm(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function classifyReading(data) {
+  const issues = [];
+  if (!data || typeof data !== 'object') {
+    return { status: 'INVALID', issues: ['reading is not a valid object'] };
+  }
+
+  // Check power — extreme values likely indicate malformed/legacy records
+  const pwr = _norm(data.power);
+  if (pwr !== null) {
+    if (!Number.isFinite(pwr)) {
+      issues.push('power is not finite');
+    } else if (Math.abs(pwr) > VALIDATION_RULES.maxPowerW) {
+      issues.push(`power exceeds ${VALIDATION_RULES.maxPowerW} W`);
+    }
+  } else {
+    issues.push('power is not a valid number');
+  }
+
+  // Check voltage — outside physical range for 230V system
+  const v = _norm(data.voltage);
+  if (v !== null) {
+    if (!Number.isFinite(v)) {
+      issues.push('voltage is not finite');
+    } else if (v < VALIDATION_RULES.voltageRange[0] || v > VALIDATION_RULES.voltageRange[1]) {
+      issues.push(`voltage ${v.toFixed(1)}V outside ${VALIDATION_RULES.voltageRange[0]}-${VALIDATION_RULES.voltageRange[1]}V range`);
+    }
+  } else {
+    issues.push('voltage is not a valid number');
+  }
+
+  // Check current — outside typical PZEM range
+  const i = _norm(data.current);
+  if (i !== null) {
+    if (!Number.isFinite(i)) {
+      issues.push('current is not finite');
+    } else if (i < VALIDATION_RULES.minCurrentA || i > VALIDATION_RULES.maxCurrentA) {
+      issues.push(`current ${i.toFixed(1)}A outside valid ${VALIDATION_RULES.minCurrentA}-${VALIDATION_RULES.maxCurrentA} A range`);
+    }
+  } else {
+    issues.push('current is not a valid number');
+  }
+
+  // Check frequency — outside 50Hz ± 0.5Hz range
+  const f = _norm(data.frequency);
+  if (f !== null) {
+    if (!Number.isFinite(f)) {
+      issues.push('frequency is not finite');
+    } else if (f < VALIDATION_RULES.frequencyRange[0] || f > VALIDATION_RULES.frequencyRange[1]) {
+      issues.push(`frequency ${f.toFixed(1)}Hz outside ${VALIDATION_RULES.frequencyRange[0]}-${VALIDATION_RULES.frequencyRange[1]}Hz range`);
+    }
+  } else {
+    issues.push('frequency is not a valid number');
+  }
+
+  // Check power factor — outside valid 0.0-1.0 range
+  const pf = _norm(data.pf);
+  if (pf !== null) {
+    if (!Number.isFinite(pf)) {
+      issues.push('pf is not finite');
+    } else if (pf < VALIDATION_RULES.pfRange[0] || pf > VALIDATION_RULES.pfRange[1]) {
+      issues.push(`pf ${pf.toFixed(2)} outside valid ${VALIDATION_RULES.pfRange[0]}-${VALIDATION_RULES.pfRange[1]} range`);
+    }
+  } else {
+    issues.push('pf is not a valid number');
+  }
+
+  // Check energy — negative energy is impossible for cumulative counter
+  const e = _norm(data.energy);
+  if (e !== null) {
+    if (!Number.isFinite(e)) {
+      issues.push('energy is not finite');
+    } else if (e < VALIDATION_RULES.minEnergy) {
+      issues.push(`energy ${e.toFixed(2)}kWh is negative (impossible for cumulative counter)`);
+    }
+  } else {
+    issues.push('energy is not a valid number');
+  }
+
+  let status;
+  if (issues.length === 0) {
+    status = 'VALID';
+  } else if (issues.length <= 2) {
+    status = 'SUSPICIOUS';
+  } else {
+    status = 'INVALID';
+  }
+
+  return { status, issues };
+}
+
 /* Get theme-aware chart colors from CSS variables */
 function getChartColors() {
   const style = getComputedStyle(document.body);
@@ -833,7 +949,7 @@ async function loadBillHistoricalData() {
     const snapshots = await Promise.all(
       Array.from({ length: 9 }, (_, index) =>
         firebase.database()
-          .ref(`history/pzem_${index + 1}`)
+          .ref(`${historyPrefix()}pzem_${index + 1}`)
           .orderByKey()
           .startAt(String(Math.floor(start / 1000)))
           .once("value")
@@ -1034,6 +1150,30 @@ function renderDashboard() {
     acStatus.classList.add(ac === true ? "online" : ac === false ? "off" : "unknown");
     acStatus.querySelector("b").textContent = ac === true ? "AC ON" : ac === false ? "AC OFF" : "UNKNOWN";
 
+    // Freshness badge
+    const freshnessBadge = card.querySelector(".freshness-badge");
+    const freshnessIsLive = isMeterFresh(meter);
+    const ageMs = meterAgeMs(meter);
+
+    if (freshnessIsLive) {
+      freshnessBadge.className = "meter-status freshness-badge live";
+      freshnessBadge.textContent = "LIVE";
+    } else if (ageMs !== null && ageMs > FRESHNESS_TIMEOUT_MS) {
+      // STALE: past the freshness timeout but still has data
+      freshnessBadge.className = "meter-status freshness-badge stale";
+      const ageSec = Math.round(ageMs / 1000);
+      const mins = Math.floor(ageSec / 60);
+      const secs = ageSec % 60;
+      if (mins > 0) {
+        freshnessBadge.textContent = `Last update: ${mins} min ${secs} sec ago`;
+      } else {
+        freshnessBadge.textContent = `Last update: ${secs} sec ago`;
+      }
+    } else {
+      // OFFLINE: no data at all
+      freshnessBadge.className = "meter-status freshness-badge offline";
+      freshnessBadge.textContent = "OFFLINE";
+    }
 card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* enables click-to-open popup */
     
     // Add offline class for visual styling
@@ -1203,6 +1343,13 @@ function timestampMilliseconds(timestamp) {
   return String(timestamp).length > 10 ? value : value * 1000;
 }
 
+/* Returns the Firebase history path prefix based on DATA_SOURCE.
+   Live:  history/pzem_N/<unix-seconds>   (written by firmware)
+   Synthetic: ai/synthetic_history/pzem_N/<timestamp>   (written by seed script) */
+function historyPrefix() {
+  return DATA_SOURCE === "synthetic" ? "ai/synthetic_history" : "history";
+}
+
 /* Uses the exact same range interpretation as the PZEM popup's Historical
    Usage selector (historyRangeToWindow(), defined below) so both selectors
    behave consistently — same 1h/6h/12h/today/yesterday/7d/30d windows,
@@ -1220,7 +1367,7 @@ async function loadPowerHistory(range) {
     const snapshots = await Promise.all(
       Array.from({ length: 9 }, (_, index) =>
         firebase.database()
-          .ref(`history/pzem_${index + 1}`)
+          .ref(`${historyPrefix()}pzem_${index + 1}`)
           .orderByKey()
           .startAt(String(Math.floor(start / 1000)))
           .once("value")
@@ -1236,8 +1383,25 @@ async function loadPowerHistory(range) {
         const time = timestampMilliseconds(timestamp);
         if (time > end) return; // respect the range's end boundary too (e.g. "Yesterday" must exclude today)
 
-        if (!timeline.has(time)) timeline.set(time, Array(9).fill(null));
-        timeline.get(time)[meterIndex] = normalizePowerWatts(data);
+        // Validate the reading and classify it
+        const classification = classifyReading(data);
+
+        if (classification.status === 'INVALID') {
+          console.warn(`[HISTORY VALIDATION] PZEM ${meterIndex + 1} key=${timestamp}: INVALID reading — ${classification.issues.join(', ')}. Raw data preserved in log.`);
+          // Replace extreme values with null to prevent charting impossibilities,
+          // while preserving the raw Firebase record for debugging
+          if (!timeline.has(time)) timeline.set(time, Array(9).fill(null));
+          timeline.get(time)[meterIndex] = null;
+        } else if (classification.status === 'SUSPICIOUS') {
+          console.warn(`[HISTORY VALIDATION] PZEM ${meterIndex + 1} key=${timestamp}: SUSPICIOUS — ${classification.issues.join(', ')}. Value included as-is.`);
+          // Include suspicious values but log the warning
+          if (!timeline.has(time)) timeline.set(time, Array(9).fill(null));
+          timeline.get(time)[meterIndex] = normalizePowerWatts(data);
+        } else {
+          // VALID reading — include as normal
+          if (!timeline.has(time)) timeline.set(time, Array(9).fill(null));
+          timeline.get(time)[meterIndex] = normalizePowerWatts(data);
+        }
       });
     });
 
@@ -1564,15 +1728,15 @@ function formatKolkataDateTime(timestampMs) {
    snapshot — one row per stored reading, across all 9 meters. This is
    separate from live monitoring on purpose: live data drives the dashboard
    cards/graphs, history data is what gets exported and later analyzed. */
-$("exportButton").addEventListener("click", async () => {
-  const originalLabel = $("exportButton").textContent;
-  $("exportButton").disabled = true;
-  $("exportButton").textContent = "Preparing export…";
+$('exportButton').addEventListener('click', async () => {
+  const originalLabel = $('exportButton').textContent;
+  $('exportButton').disabled = true;
+  $('exportButton').textContent = 'Preparing export…';
 
   try {
     const snapshots = await Promise.all(
       Array.from({ length: 9 }, (_, index) =>
-        firebase.database().ref(`history/pzem_${index + 1}`).once("value")
+        firebase.database().ref(`${historyPrefix()}pzem_${index + 1}`).once("value")
       )
     );
 
@@ -1582,6 +1746,7 @@ $("exportButton").addEventListener("click", async () => {
       const pzemId = `PZEM ${meterIndex + 1}`;
       Object.entries(snapshot.val() || {}).forEach(([timestampKey, reading]) => {
         if (!reading || typeof reading !== "object") return; // skip malformed entries, never invent values
+        if (classifyReading(reading).status === 'INVALID') return; // exclude corrupt/impossible records from CSV export
 
         const { date, time } = formatKolkataDateTime(timestampMilliseconds(timestampKey));
         rows.push([
@@ -2069,7 +2234,7 @@ async function fetchActualForForecast(meterKey, windowSeconds) {
   if (meterKey === "system") {
     const snaps = await Promise.all(
       Array.from({ length: 9 }, (_, i) =>
-        firebase.database().ref(`history/pzem_${i + 1}`).orderByKey().startAt(String(Math.floor(start / 1000))).once("value"))
+        firebase.database().ref(`${historyPrefix()}pzem_${i + 1}`).orderByKey().startAt(String(Math.floor(start / 1000))).once("value"))
     );
     const sums = {};
     snaps.forEach((snap) => {
@@ -2086,7 +2251,7 @@ async function fetchActualForForecast(meterKey, windowSeconds) {
     return Object.entries(sums).map(([t, p]) => ({ t: Number(t), power: p })).sort((a, b) => a.t - b.t);
   }
   const n = Number(meterKey.split("_")[1]);
-  const snap = await firebase.database().ref(`history/pzem_${n}`).orderByKey().startAt(String(Math.floor(start / 1000))).once("value");
+  const snap = await firebase.database().ref(`${historyPrefix()}pzem_${n}`).orderByKey().startAt(String(Math.floor(start / 1000))).once("value");
   const val = snap.val() || {};
   return Object.entries(val)
     .map(([k, reading]) => ({ t: timestampMilliseconds(k), power: normalizePowerWatts(reading) }))
@@ -2337,13 +2502,13 @@ function renderModalSessions() {
   const currentBlock = $("modalCurrentSession");
   if (state.online && state.sessionStart) {
     currentBlock.innerHTML = `
-      <span class="session-live-pill">● LIVE</span>
+      <span class="session-live-pill">●LIVE</span>
       <dl class="pzem-overview-grid">
         <div><dt>Reporting since</dt><dd>${new Date(state.sessionStart).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</dd></div>
         <div><dt>Duration</dt><dd>${formatDuration(Date.now() - state.sessionStart)}</dd></div>
       </dl>`;
   } else {
-    currentBlock.innerHTML = `<span class="session-live-pill off">● OFF</span>`;
+    currentBlock.innerHTML = `<span class="session-live-pill off">●OFF</span>`;
   }
 
   const list = $("modalSessionList");
@@ -2427,7 +2592,7 @@ async function renderModalHistory(range) {
 
   try {
     const snapshot = await firebase.database()
-      .ref(`history/pzem_${meterN}`)
+      .ref(`${historyPrefix()}pzem_${meterN}`)
       .orderByKey()
       .startAt(String(Math.floor(start / 1000)))
       .once("value");
@@ -2435,7 +2600,17 @@ async function renderModalHistory(range) {
     if (requestId !== modalHistoryRequestId || meterN !== activeMeterNumber) return;
 
     const points = Object.entries(snapshot.val() || {})
-      .map(([timestamp, data]) => ({ t: timestampMilliseconds(timestamp), power: normalizePowerWatts(data), energy: Number(data.energy ?? NaN) }))
+      .map(([timestamp, data]) => {
+        const classification = classifyReading(data);
+        if (classification.status === 'INVALID') {
+          console.warn(`[HISTORY VALIDATION] PZEM ${meterN} key=${timestamp}: INVALID — ${classification.issues.join(', ')}. Raw data preserved; value excluded from chart.`);
+          return { t: timestampMilliseconds(timestamp), power: null, energy: null, _classification: classification };
+        }
+        if (classification.status === 'SUSPICIOUS') {
+          console.warn(`[HISTORY VALIDATION] PZEM ${meterN} key=${timestamp}: SUSPICIOUS — ${classification.issues.join(', ')}. Value included as-is.`);
+        }
+        return { t: timestampMilliseconds(timestamp), power: normalizePowerWatts(data), energy: Number(data.energy ?? NaN), _classification: classification };
+      })
       .filter((point) => point.t <= end)
       .sort((a, b) => a.t - b.t);
 

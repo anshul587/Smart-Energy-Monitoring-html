@@ -54,7 +54,11 @@ _KNOWLEDGE = _load_knowledge()
 def _get_api_key() -> str:
     try:
         settings = get_settings()
-        return getattr(settings, "anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+        provider = getattr(settings, "llm_provider", "openrouter")
+        if provider == "anthropic":
+            return getattr(settings, "anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+        # openrouter (default) ---
+        return getattr(settings, "open_router_api_key", "") or os.environ.get("OPENROUTER_API_KEY", "")
     except Exception:  # config missing -> no key, deterministic path only
         return ""
 
@@ -353,10 +357,10 @@ def _casual_response(question: str) -> str:
     return _CASUAL_RESPONSES[_classify_casual(question)]
 
 
-def _llm_general_conversation(question: str, history: list, api_key: str) -> Optional[str]:
+def _llm_general_conversation(question: str, history: list, api_key: str, provider: str = "openrouter") -> Optional[str]:
     """Use LLM for natural general conversation. Only for non-project, non-energy topics."""
     try:
-        import anthropic
+        import openai as _openai
     except ImportError:
         return None
     try:
@@ -375,10 +379,21 @@ def _llm_general_conversation(question: str, history: list, api_key: str) -> Opt
             if content:
                 messages.append({"role": role, "content": content})
         messages.append({"role": "user", "content": question})
-        client = anthropic.Anthropic(api_key=api_key)
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
-        resp = client.messages.create(model=model, max_tokens=400, system=system, messages=messages)
-        answer = "".join(getattr(b, "text", "") for b in resp.content).strip()
+        if provider == "openrouter":
+            client = _openai.OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
+            )
+            model = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
+            resp = client.models.create(model=model, max_tokens=400, system=system, messages=messages)  # type: ignore
+            answer = "".join(getattr(b, "text", "") for b in resp.choices).strip()
+        else:
+            # anthropic fallback
+            import anthropic  # type: ignore
+            client = anthropic.Anthropic(api_key=api_key)
+            model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+            resp = client.messages.create(model=model, max_tokens=400, system=system, messages=messages)
+            answer = "".join(getattr(b, "text", "") for b in resp.content).strip()
         return answer or None
     except Exception as exc:  # noqa: BLE001
         logger.warning("Ask BOB LLM general conversation failed; using fallback: %s", exc)
@@ -696,10 +711,10 @@ def _compose_energy(question: str, results: dict) -> str:
     return " ".join(pieces)
 
 
-def _llm_compose_energy(question: str, results: dict, history: list, api_key: str) -> Optional[str]:
+def _llm_compose_energy(question: str, results: dict, history: list, api_key: str, provider: str = "openrouter") -> Optional[str]:
     """LLM composes natural answer from verified tool data only."""
     try:
-        import anthropic
+        import openai as _openai
     except ImportError:
         return None
     try:
@@ -721,10 +736,21 @@ def _llm_compose_energy(question: str, results: dict, history: list, api_key: st
         ctx_text = json.dumps(results, default=str)
         messages.append({"role": "user",
                          "content": f"Question: {question}\n\nVerified tool data:\n{ctx_text}"})
-        client = anthropic.Anthropic(api_key=api_key)
-        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
-        resp = client.messages.create(model=model, max_tokens=500, system=system, messages=messages)
-        answer = "".join(getattr(b, "text", "") for b in resp.content).strip()
+        if provider == "openrouter":
+            client = _openai.OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key,
+            )
+            model = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
+            resp = client.models.create(model=model, max_tokens=500, system=system, messages=messages)  # type: ignore
+            answer = "".join(getattr(b, "text", "") for b in resp.choices).strip()
+        else:
+            # anthropic fallback
+            import anthropic  # type: ignore
+            client = anthropic.Anthropic(api_key=api_key)
+            model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
+            resp = client.messages.create(model=model, max_tokens=500, system=system, messages=messages)
+            answer = "".join(getattr(b, "text", "") for b in resp.content).strip()
         return answer or None
     except Exception as exc:  # noqa: BLE001
         logger.warning("Ask BOB Claude compose failed; using deterministic path: %s", exc)
@@ -766,7 +792,8 @@ def ask_bob(question: str, history: Optional[list] = None) -> dict[str, Any]:
         results = _ok_results(ctx)
 
         if has_llm and results:
-            energy_part = _llm_compose_energy(resolved, results, history, api_key) or _compose_energy(resolved, results)
+            energy_part = _llm_compose_energy(resolved, results, history, api_key,
+                                              provider=getattr(get_settings(), "llm_provider", "openrouter")) or _compose_energy(resolved, results)
         else:
             energy_part = _compose_energy(resolved, results)
 
@@ -784,7 +811,8 @@ def ask_bob(question: str, history: Optional[list] = None) -> dict[str, Any]:
         project_part = _project_response(resolved, _KNOWLEDGE)
         if has_llm:
             # Use LLM to compose natural mixed response
-            ans = _llm_general_conversation(resolved, history, api_key)
+            ans = _llm_general_conversation(resolved, history, api_key,
+                                            provider=getattr(get_settings(), "llm_provider", "openrouter"))
             if ans:
                 return {"status": "ok", "answer": ans, "source": "llm", "intent": "casual+project"}
         # Fallback: compose manually
@@ -802,7 +830,8 @@ def ask_bob(question: str, history: Optional[list] = None) -> dict[str, Any]:
         results = _ok_results(ctx)
 
         if has_llm and results:
-            ans = _llm_compose_energy(resolved, results, history, api_key)
+            ans = _llm_compose_energy(resolved, results, history, api_key,
+                                      provider=getattr(get_settings(), "llm_provider", "openrouter"))
             if ans:
                 return {"status": "ok", "answer": ans, "source": "llm", "intent": "energy"}
 
@@ -817,7 +846,8 @@ def ask_bob(question: str, history: Optional[list] = None) -> dict[str, Any]:
         if answer == _NO_INFO:
             # Not in knowledge base - try LLM for general knowledge if available
             if has_llm:
-                ans = _llm_general_conversation(resolved, history, api_key)
+                ans = _llm_general_conversation(resolved, history, api_key,
+                                                provider=getattr(get_settings(), "llm_provider", "openrouter"))
                 if ans:
                     return {"status": "ok", "answer": ans, "source": "llm", "intent": "general"}
             return {"status": "ok", "answer": _NO_INFO, "source": "project", "intent": "project"}

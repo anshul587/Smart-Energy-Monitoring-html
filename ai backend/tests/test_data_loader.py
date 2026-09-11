@@ -222,7 +222,7 @@ def test_fetch_all_history_one_meter_failing_does_not_block_others(settings, mon
     })
 
     def per_meter_ref(path):
-        if path == "history/pzem_4":
+        if path in ("history/pzem_4", "ai/synthetic_history/pzem_4"):
             return _FakeRef(None, raise_error=ConnectionError("PZEM 4 path unreachable"))
         return _FakeRef(good_raw)
 
@@ -240,3 +240,151 @@ def test_invalid_pzem_number_rejected(settings):
         dl.fetch_meter_history(0, settings=settings)
     with pytest.raises(ValueError):
         dl.fetch_meter_history(10, settings=settings)
+
+
+# ---------------------------------------------------------------------------
+# New: data source selection and path isolation
+# ---------------------------------------------------------------------------
+
+
+def test_history_prefix_live(monkeypatch):
+    """LIVE: _history_prefix returns 'history' when data_source='live'."""
+    monkeypatch.setenv("DATA_SOURCE", "live")
+    from ai.config import Settings
+    s = Settings(
+        firebase_service_account_path="unused-in-tests.json",
+        firebase_database_url="https://example-not-real.firebasedatabase.app",
+        pzem_count=9,
+        history_retention_days=60,
+        cache_dir=Path("/tmp/cache"),
+    )
+    assert dl._history_prefix(s) == "history"
+
+
+def test_history_prefix_synthetic(monkeypatch):
+    """SYNTHETIC: _history_prefix returns 'ai/synthetic_history' when data_source='synthetic'."""
+    monkeypatch.setenv("DATA_SOURCE", "synthetic")
+    from ai.config import Settings
+    s = Settings(
+        firebase_service_account_path="unused-in-tests.json",
+        firebase_database_url="https://example-not-real.firebasedatabase.app",
+        pzem_count=9,
+        history_retention_days=60,
+        cache_dir=Path("/tmp/cache"),
+    )
+    assert dl._history_prefix(s) == "ai/synthetic_history"
+
+
+def test_settings_data_source_live(monkeypatch, tmp_path):
+    """LIVE: Settings reads DATA_SOURCE='live' from env var when set."""
+    monkeypatch.setenv("DATA_SOURCE", "live")
+    s = Settings(
+        firebase_service_account_path="unused-in-tests.json",
+        firebase_database_url="https://example-not-real.firebasedatabase.app",
+        pzem_count=9,
+        history_retention_days=60,
+        cache_dir=tmp_path / "cache",
+    )
+    assert s.data_source == "live"
+
+
+def test_settings_data_source_synthetic(monkeypatch, tmp_path):
+    """SYNTHETIC: Settings reads DATA_SOURCE='synthetic' from env var when set."""
+    monkeypatch.setenv("DATA_SOURCE", "synthetic")
+    s = Settings(
+        firebase_service_account_path="unused-in-tests.json",
+        firebase_database_url="https://example-not-real.firebasedatabase.app",
+        pzem_count=9,
+        history_retention_days=60,
+        cache_dir=tmp_path / "cache",
+    )
+    assert s.data_source == "synthetic"
+
+
+def test_settings_data_source_invalid_raises(monkeypatch, tmp_path):
+    """LIVE: Settings rejects DATA_SOURCE values other than 'live' or 'synthetic'."""
+    monkeypatch.setenv("DATA_SOURCE", "invalid")
+    try:
+        s = Settings(
+            firebase_service_account_path="unused-in-tests.json",
+            firebase_database_url="https://example-not-real.firebasedatabase.app",
+            pzem_count=9,
+            history_retention_days=60,
+            cache_dir=tmp_path / "cache",
+        )
+        assert False, "Expected ConfigError to be raised"
+    except Exception as e:
+        from ai.config import ConfigError
+        assert isinstance(e, ConfigError)
+
+
+def test_fetch_meter_history_uses_live_path(monkeypatch, tmp_path):
+    """LIVE: fetch_meter_history passes 'history/pzem_N' path to _db_ref when data_source='live'."""
+    monkeypatch.setenv("DATA_SOURCE", "live")
+    from ai.config import Settings
+    settings = Settings(
+        firebase_service_account_path="unused-in-tests.json",
+        firebase_database_url="https://example-not-real.firebasedatabase.app",
+        pzem_count=9,
+        history_retention_days=60,
+        cache_dir=tmp_path / "cache",
+    )
+
+    call_paths = []
+
+    def tracking_ref(path):
+        call_paths.append(path)
+        return _FakeRef({})
+
+    monkeypatch.setattr(dl, "_db_ref", tracking_ref)
+    dl.fetch_meter_history(1, settings=settings)
+    assert call_paths == ["history/pzem_1"], f"Expected ['history/pzem_1'], got {call_paths}"
+
+
+def test_fetch_meter_history_uses_synthetic_path(monkeypatch, tmp_path):
+    """SYNTHETIC: fetch_meter_history passes 'ai/synthetic_history/pzem_N' path to _db_ref when data_source='synthetic'."""
+    monkeypatch.setenv("DATA_SOURCE", "synthetic")
+    from ai.config import Settings
+    settings = Settings(
+        firebase_service_account_path="unused-in-tests.json",
+        firebase_database_url="https://example-not-real.firebasedatabase.app",
+        pzem_count=9,
+        history_retention_days=60,
+        cache_dir=tmp_path / "cache",
+    )
+
+    call_paths = []
+
+    def tracking_ref(path):
+        call_paths.append(path)
+        return _FakeRef({})
+
+    monkeypatch.setattr(dl, "_db_ref", tracking_ref)
+    dl.fetch_meter_history(1, settings=settings)
+    assert call_paths == ["ai/synthetic_history/pzem_1"], f"Expected ['ai/synthetic_history/pzem_1'], got {call_paths}"
+
+
+def test_fetch_all_history_source_isolation(monkeypatch, tmp_path):
+    """SYNTHETIC: fetch_all_history with data_source='synthetic' routes all meters to synthetic path."""
+    monkeypatch.setenv("DATA_SOURCE", "synthetic")
+    from ai.config import Settings
+    settings = Settings(
+        firebase_service_account_path="unused-in-tests.json",
+        firebase_database_url="https://example-not-real.firebasedatabase.app",
+        pzem_count=9,
+        history_retention_days=60,
+        cache_dir=tmp_path / "cache",
+    )
+
+    call_paths = []
+
+    def tracking_ref(path):
+        call_paths.append(path)
+        return _FakeRef({})
+
+    monkeypatch.setattr(dl, "_db_ref", tracking_ref)
+    dl.fetch_all_history(settings=settings)
+
+    # All 9 meters should have been routed to the synthetic path
+    expected = [f"ai/synthetic_history/pzem_{n}" for n in range(1, 10)]
+    assert call_paths == expected, f"Expected {expected}, got {call_paths}"

@@ -26,6 +26,7 @@
 #include <WiFiManager.h>
 #include <PZEM004Tv30.h>
 #include <time.h>
+#include <esp_task_wdt.h>
 #include "config.h"
 
 struct Reading {
@@ -125,6 +126,18 @@ uint32_t lastAlertUploadMs = 0;
 uint16_t commFailStreak[PZEM_COUNT] = {0}; // how many cycles this meter has been invalid
 uint8_t validCountThisCycle[PZEM_COUNT] = {0}; // how many valid readings this meter has this cycle
 
+// --- Reliability / Recovery State ---
+uint16_t consecutiveHttpsFails = 0;          // counts consecutive HTTPS request failures
+uint16_t maxConsecutiveHttpsFails = 10;      // trigger Wi-Fi reinit after this many
+uint32_t lastHttpsSuccessMs = 0;             // timestamp of last successful HTTPS request
+uint32_t lastWatchdogFeedMs = 0;             // watchdog feed timestamp
+uint32_t lastDiagLogMs = 0;                  // periodic diagnostics log timestamp
+uint8_t pzemConsecutiveFails[PZEM_COUNT] = {0}; // per-meter consecutive read failures
+uint32_t pzemCooldownMs[PZEM_COUNT] = {0};    // cooldown timer per meter
+const uint16_t PZEM_CONSEC_FAILS_TRIGGER = 3; // after N fails, start cooldown
+const uint32_t PZEM_COOLDOWN_MS = 30000UL;    // 30s cooldown before auto-retry
+bool watchdogEnabled = false;                 // track watchdog init status
+
 const uint8_t ADDRESS[PZEM_COUNT] = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
 
 bool elapsed(uint32_t now, uint32_t then, uint32_t period) {
@@ -215,17 +228,25 @@ void reportFirebaseTokenFields(const String &token, const String &refresh, long 
 
 // All HTTP calls have a bounded timeout. They are invoked only from scheduled
 // tasks; sensor polling never waits for an authentication retry loop.
-int httpsRequest(const String &url, const char *method, const String &body, String *response = nullptr) {
+// Uses a shared WiFiClientSecure to avoid repeated TLS session allocation.
+// Guarantees https.end() and client cleanup on EVERY path.
+// Returns HTTP status code, or negative error code. Sets `outCode` to 401 if auth expired.
+int httpsRequest(const String &url, const char *method, const String &body, String *response = nullptr, int *outCode = nullptr) {
   if (WiFi.status() != WL_CONNECTED) return -1;
-  WiFiClientSecure client;
-  // TODO before production: configure a current Google CA bundle for this
-  // client. setInsecure is used only so the first hardware/Firebase test works
-  // on Arduino-ESP32 installations without a certificate bundle.
-  client.setInsecure();
+  static WiFiClientSecure sharedClient;
+  static bool clientInitialized = false;
+  if (!clientInitialized) {
+    sharedClient.setInsecure();
+    clientInitialized = true;
+  }
   HTTPClient https;
   https.setConnectTimeout(HTTP_TIMEOUT_MS);
   https.setTimeout(HTTP_TIMEOUT_MS);
-  if (!https.begin(client, url)) return -2;
+  if (!https.begin(sharedClient, url)) {
+    https.end();
+    consecutiveHttpsFails++;
+    return -2;
+  }
   https.addHeader("Content-Type", "application/json");
   int code = -3;
   if (!strcmp(method, "POST")) code = https.POST(body);
@@ -235,6 +256,15 @@ int httpsRequest(const String &url, const char *method, const String &body, Stri
   else if (!strcmp(method, "GET")) code = https.GET();
   if (response && code > 0) *response = https.getString();
   https.end();
+
+  if (code >= 200 && code < 300) {
+    consecutiveHttpsFails = 0;
+    lastHttpsSuccessMs = millis();
+  } else {
+    consecutiveHttpsFails++;
+    if (code == 401 && outCode) *outCode = 401;
+    if (code > 0) Serial.printf("[HTTPS] Request failed: %d (consecutive fails: %u)\n", code, consecutiveHttpsFails);
+  }
   return code;
 }
 
@@ -285,11 +315,18 @@ bool refreshAuthToken() {
   String body = String("grant_type=refresh_token&refresh_token=") + refreshToken;
   // OAuth token exchange uses form encoding.
   if (WiFi.status() != WL_CONNECTED) return false;
-  WiFiClientSecure client;
-  client.setInsecure(); // Replace with a maintained CA bundle before production.
+  static WiFiClientSecure sharedClient;
+  static bool clientInitialized = false;
+  if (!clientInitialized) {
+    sharedClient.setInsecure();
+    clientInitialized = true;
+  }
   HTTPClient https;
   https.setConnectTimeout(HTTP_TIMEOUT_MS); https.setTimeout(HTTP_TIMEOUT_MS);
-  if (!https.begin(client, refreshUrl())) return false;
+  if (!https.begin(sharedClient, refreshUrl())) {
+    https.end();
+    return false;
+  }
   https.addHeader("Content-Type", "application/x-www-form-urlencoded");
   int code = https.POST(body);
   if (code > 0) reply = https.getString();
@@ -346,17 +383,21 @@ bool isUndervoltage(const Reading &r) {
     && r.voltage < LOW_VOLTAGE_LIMIT;
 }
 
-String readingJson(const Reading &r, time_t timestamp, bool history) {
+void readingJson(const Reading &r, time_t timestamp, bool history, char *out, size_t outSize) {
   const bool acOn = isAcPresent(r);
-  char data[320];
-  snprintf(data, sizeof(data),
-    "{\"voltage\":%.1f,\"current\":%.2f,\"power\":%.1f,\"energy\":%.3f,\"frequency\":%.1f,\"pf\":%.2f,\"status\":\"online\",\"acSupplyOn\":%s,\"timestamp\":%lld}",
-    r.voltage, r.current, r.power, r.energy, r.frequency, r.pf,
-    acOn ? "true" : "false",
-    (long long)timestamp);
-  String out(data);
-  if (!history) out = out.substring(0, out.length() - 1) + ",\"lastSeen\":" + String((long long)timestamp) + "}";
-  return out;
+  if (history) {
+    snprintf(out, outSize,
+      "{\"voltage\":%.1f,\"current\":%.2f,\"power\":%.1f,\"energy\":%.3f,\"frequency\":%.1f,\"pf\":%.2f,\"status\":\"online\",\"acSupplyOn\":%s,\"timestamp\":%lld}",
+      r.voltage, r.current, r.power, r.energy, r.frequency, r.pf,
+      acOn ? "true" : "false",
+      (long long)timestamp);
+  } else {
+    snprintf(out, outSize,
+      "{\"voltage\":%.1f,\"current\":%.2f,\"power\":%.1f,\"energy\":%.3f,\"frequency\":%.1f,\"pf\":%.2f,\"status\":\"online\",\"acSupplyOn\":%s,\"timestamp\":%lld,\"lastSeen\":%lld}",
+      r.voltage, r.current, r.power, r.energy, r.frequency, r.pf,
+      acOn ? "true" : "false",
+      (long long)timestamp, (long long)timestamp);
+  }
 }
 
 uint16_t modbusCrc(const uint8_t *data, size_t length) {
@@ -411,6 +452,29 @@ void diagnosePzemFailure(uint8_t address) {
 }
 
 void readMeter(uint8_t i) {
+  // Cooldown-based auto-recovery: after repeated failures, briefly skip
+  // the meter and automatically retry after a cooldown period. This prevents
+  // one unresponsive meter from permanently blocking all 9 meters.
+  if (pzemConsecutiveFails[i] >= PZEM_CONSEC_FAILS_TRIGGER && pzemCooldownMs[i] == 0) {
+    // Start cooldown: mark meter invalid and set cooldown timer
+    readings[i].valid = false;
+    pzemCooldownMs[i] = millis();
+    Serial.printf("[PZEM%u] Too many fails — starting %ums cooldown\n", ADDRESS[i], PZEM_COOLDOWN_MS);
+    return;
+  }
+
+  // If cooldown is active, check if it has elapsed
+  if (pzemCooldownMs[i] > 0 && elapsed(millis(), pzemCooldownMs[i], PZEM_COOLDOWN_MS)) {
+    // Cooldown elapsed — try reading again, reset failure counter on success
+    pzemConsecutiveFails[i] = 0;
+    pzemCooldownMs[i] = 0;
+    // Fall through to normal read below
+  } else if (pzemCooldownMs[i] > 0) {
+    // Still in cooldown — keep meter invalid, skip read
+    readings[i].valid = false;
+    return;
+  }
+
   flushStalePzemRx();  // step 1-2: previous transaction is done; drop anything still in the RX buffer
   selectPzemMux(i);    // step 3-4: route this PZEM's TX to ESP32_RX_PIN and let the mux settle
   Serial.printf("[MUX] C%u -> PZEM%u\n", i, ADDRESS[i]);
@@ -426,10 +490,16 @@ void readMeter(uint8_t i) {
   if (next.valid) {
     next.seenAt = validClock() ? time(nullptr) : 0;
     readings[i] = next;
+    pzemConsecutiveFails[i] = 0; // reset on success
+    pzemCooldownMs[i] = 0;
     Serial.printf("[PZEM%u] OK V=%.1f I=%.2f P=%.1f E=%.3f F=%.1f PF=%.2f\n", ADDRESS[i], next.voltage, next.current, next.power, next.energy, next.frequency, next.pf);
   } else {
     readings[i].valid = false;
-    Serial.printf("[PZEM%u] TIMEOUT\n", ADDRESS[i]);
+    pzemConsecutiveFails[i]++;
+    if (pzemConsecutiveFails[i] >= PZEM_CONSEC_FAILS_TRIGGER && pzemCooldownMs[i] == 0) {
+      // Will be caught at the top of readMeter() on next cycle
+    }
+    Serial.printf("[PZEM%u] TIMEOUT (consecutive fails: %u)\n", ADDRESS[i], pzemConsecutiveFails[i]);
     Serial.printf("[PZEM%u] COMMUNICATION FAILED\n", ADDRESS[i]);
     diagnosePzemFailure(ADDRESS[i]); // mux channel from selectPzemMux(i) above is still selected here
   }
@@ -727,13 +797,17 @@ void checkAlerts() {
 }
 
 String multiPathJson(const char *root, time_t slot) {
+  // Pre-allocate with reasonable capacity to avoid reallocations
   String body = "{";
+  body.reserve(512); // typical: 9 meters * ~50 chars each
   bool first = true;
+  char jsonBuf[320];
   for (uint8_t i = 0; i < PZEM_COUNT; ++i) {
     if (!selected(i) || !readings[i].valid) continue;
     if (!first) body += ',';
     String path = String(root) + "/pzem_" + ADDRESS[i] + (slot ? "/" + String((long long)slot) : "");
-    body += "\"" + path + "\":" + readingJson(readings[i], slot ? slot : time(nullptr), slot != 0);
+    readingJson(readings[i], slot ? slot : time(nullptr), slot != 0, jsonBuf, sizeof(jsonBuf));
+    body += "\"" + path + "\":" + jsonBuf;
     first = false;
   }
   return body + "}";
@@ -744,9 +818,16 @@ void uploadLive(uint32_t now) {
   lastLiveUploadMs = now;
   String body = multiPathJson("meters", 0);
   if (body == "{}") return;
-  int code = httpsRequest(dbUrl("/.json"), "PATCH", body);
-  if (code >= 200 && code < 300) Serial.println("[LIVE] Firebase update successful");
-  else Serial.printf("[LIVE] Firebase update failed: %d\n", code);
+  int httpCode = 0;
+  int code = httpsRequest(dbUrl("/.json"), "PATCH", body, nullptr, &httpCode);
+  if (code >= 200 && code < 300) {
+    Serial.println("[LIVE] Firebase update successful");
+  } else if (httpCode == 401) {
+    Serial.println("[LIVE] HTTP 401 — forcing token refresh");
+    markAuthFailed("live upload 401");
+  } else {
+    Serial.printf("[LIVE] Firebase update failed: %d\n", code);
+  }
 }
 
 void saveHistory() {
@@ -756,9 +837,17 @@ void saveHistory() {
   if (slot == lastHistorySlot) return;
   String body = multiPathJson("history", slot);
   if (body == "{}") return;
-  int code = httpsRequest(dbUrl("/.json"), "PATCH", body);
-  if (code >= 200 && code < 300) { lastHistorySlot = slot; Serial.printf("[HISTORY] Saved slot %lld\n", (long long)slot); }
-  else Serial.printf("[HISTORY] Save failed: %d\n", code);
+  int httpCode = 0;
+  int code = httpsRequest(dbUrl("/.json"), "PATCH", body, nullptr, &httpCode);
+  if (code >= 200 && code < 300) {
+    lastHistorySlot = slot;
+    Serial.printf("[HISTORY] Saved slot %lld\n", (long long)slot);
+  } else if (httpCode == 401) {
+    Serial.println("[HISTORY] HTTP 401 — forcing token refresh");
+    markAuthFailed("history save 401");
+  } else {
+    Serial.printf("[HISTORY] Save failed: %d\n", code);
+  }
 }
 
 // ---------------- Alert upload ----------------
@@ -852,9 +941,15 @@ void uploadAlerts(uint32_t now) {
 
   body += "}";
   if (first) return; // nothing usable drained
-  int code = httpsRequest(dbUrl("/.json"), "PATCH", body);
+  int httpCode = 0;
+  int code = httpsRequest(dbUrl("/.json"), "PATCH", body, nullptr, &httpCode);
   if (code >= 200 && code < 300) Serial.printf("[ALERT] uploaded %u alert(s)\n", drained);
-  else Serial.printf("[ALERT] upload failed: %d\n", code);
+  else if (httpCode == 401) {
+    Serial.println("[ALERT] HTTP 401 — forcing token refresh");
+    markAuthFailed("alert upload 401");
+  } else {
+    Serial.printf("[ALERT] upload failed: %d\n", code);
+  }
 }
 
 // Deletes ALL records older than the 60-day retention window.
@@ -872,11 +967,24 @@ void cleanupHistory(uint32_t now) {
     int totalRemoved = 0;
     // Process in batches until no more expired records remain
     for (int batch = 0; batch < MAX_CLEANUP_BATCHES_PER_CYCLE; ++batch) {
+      // Abort if too many consecutive HTTPS failures (Wi-Fi/TCP likely dead)
+      if (consecutiveHttpsFails >= maxConsecutiveHttpsFails) {
+        Serial.println("[CLEANUP] Aborting: too many consecutive HTTPS failures");
+        break;
+      }
+
       String query = String("/history/pzem_") + ADDRESS[i]
         + ".json?orderBy=%22%24key%22&endAt=%22" + String((long long)cutoff) + "%22&limitToFirst=50&auth=" + idToken;
       String reply;
-      int listCode = httpsRequest(String(FIREBASE_DATABASE_URL) + query, "GET", "", &reply);
-      if (listCode < 200 || listCode >= 300) break;
+      int httpCode = 0;
+      int listCode = httpsRequest(String(FIREBASE_DATABASE_URL) + query, "GET", "", &reply, &httpCode);
+      if (listCode < 200 || listCode >= 300) {
+        if (httpCode == 401) {
+          Serial.println("[CLEANUP] HTTP 401 — forcing token refresh");
+          markAuthFailed("cleanup list 401");
+        }
+        break;
+      }
 
       int cursor = 0;
       int batchRemoved = 0;
@@ -894,10 +1002,15 @@ void cleanupHistory(uint32_t now) {
         long long stamp = strtoll(key.c_str(), &tail, 10);
         if (!key.length() || *tail || stamp <= 0 || stamp >= cutoff) continue;
 
-        int code = httpsRequest(dbUrl(String("/history/pzem_") + ADDRESS[i] + "/" + key + ".json"), "DELETE", "");
+        int delHttpCode = 0;
+        int code = httpsRequest(dbUrl(String("/history/pzem_") + ADDRESS[i] + "/" + key + ".json"), "DELETE", "", nullptr, &delHttpCode);
         if (code >= 200 && code < 300) {
           batchRemoved++;
           totalRemoved++;
+        } else if (delHttpCode == 401) {
+          Serial.println("[CLEANUP] HTTP 401 on DELETE — forcing token refresh");
+          markAuthFailed("cleanup delete 401");
+          break;
         }
       }
 
@@ -928,6 +1041,18 @@ void serviceWiFi(uint32_t now) {
   wifiManager.process();
   if (WiFi.status() == WL_CONNECTED) {
     if (portalRunning) { portalRunning = false; Serial.printf("[WIFI] Connected: %s\n", WiFi.localIP().toString().c_str()); }
+
+    // TCP-layer health check: if too many consecutive HTTPS failures, force Wi-Fi reinit
+    if (consecutiveHttpsFails >= maxConsecutiveHttpsFails) {
+      Serial.printf("[WIFI] %u consecutive HTTPS failures — forcing Wi-Fi reinit\n", consecutiveHttpsFails);
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      delay(500);
+      WiFi.mode(WIFI_STA);
+      WiFi.setAutoReconnect(true);
+      consecutiveHttpsFails = 0;
+      lastWiFiRetryMs = now; // reset retry timer
+    }
     return;
   }
   if (portalRunning) return;
@@ -939,6 +1064,24 @@ void serviceWiFi(uint32_t now) {
 void setup() {
   Serial.begin(SERIAL_MONITOR_BAUD);
   Serial.println("\n[BOOT] Smart Energy Monitoring System");
+
+  // Log reset reason for post-mortem diagnosis
+  esp_reset_reason_t resetReason = esp_reset_reason();
+  const char *resetReasonStr = "UNKNOWN";
+  switch (resetReason) {
+    case ESP_RST_POWERON: resetReasonStr = "POWER_ON"; break;
+    case ESP_RST_EXT: resetReasonStr = "EXTERNAL_PIN"; break;
+    case ESP_RST_SW: resetReasonStr = "SOFTWARE_RESET"; break;
+    case ESP_RST_PANIC: resetReasonStr = "PANIC/EXCEPTION"; break;
+    case ESP_RST_INT_WDT: resetReasonStr = "INT_WDT"; break;
+    case ESP_RST_TASK_WDT: resetReasonStr = "TASK_WDT"; break;
+    case ESP_RST_WDT: resetReasonStr = "OTHER_WDT"; break;
+    case ESP_RST_DEEPSLEEP: resetReasonStr = "DEEP_SLEEP"; break;
+    case ESP_RST_BROWNOUT: resetReasonStr = "BROWNOUT"; break;
+    case ESP_RST_SDIO: resetReasonStr = "SDIO"; break;
+  }
+  Serial.printf("[BOOT] Reset reason: %s\n", resetReasonStr);
+
   if (PZEM_TEST_MODE && (PZEM_TEST_ADDRESS < 1 || PZEM_TEST_ADDRESS > 9)) { Serial.println("[BOOT] Invalid PZEM_TEST_ADDRESS"); while (true) delay(1000); }
   pinMode(MUX_S0, OUTPUT);
   pinMode(MUX_S1, OUTPUT);
@@ -972,10 +1115,36 @@ void setup() {
   } else {
     Serial.printf("[BOOT] PZEM test mode: OFF — monitoring all %u addresses (1..%u).\n", PZEM_COUNT, PZEM_COUNT);
   }
+
+  // Initialize ESP32 Task Watchdog (timeout: 30s, panic on timeout)
+  // This catches genuine firmware deadlocks (TLS, UART, Wi-Fi stack).
+  esp_task_wdt_config_t wdtConfig = {
+    .timeout_ms = 30000,
+    .idle_core_mask = 0,
+    .trigger_panic = true
+  };
+  if (esp_task_wdt_init(&wdtConfig) == ESP_OK) {
+    if (esp_task_wdt_add(NULL) == ESP_OK) {
+      watchdogEnabled = true;
+      Serial.println("[WDT] Task watchdog enabled (30s timeout)");
+    } else {
+      Serial.println("[WDT] Failed to add task to watchdog");
+    }
+  } else {
+    Serial.println("[WDT] Failed to init watchdog");
+  }
+  lastWatchdogFeedMs = millis();
 }
 
 void loop() {
   uint32_t now = millis();
+
+  // Feed watchdog early — if we reach here, main loop is alive
+  if (watchdogEnabled) {
+    esp_task_wdt_reset();
+    lastWatchdogFeedMs = now;
+  }
+
   serviceWiFi(now);
   if (WiFi.status() == WL_CONNECTED) syncClock();
   serviceAuthentication(now);
@@ -984,5 +1153,18 @@ void loop() {
   saveHistory();
   cleanupHistory(now);
   serviceAlarmOutputs(now);
+
+  // Periodic diagnostics (every 60s): heap, uptime, HTTPS failures, Wi-Fi status
+  if (elapsed(now, lastDiagLogMs, 60000UL)) {
+    lastDiagLogMs = now;
+    Serial.printf("[DIAG] Free heap: %u bytes | HTTPS fails: %u | Uptime: %lu s | WiFi: %s | Auth: %s\n",
+      ESP.getFreeHeap(), consecutiveHttpsFails, now / 1000UL,
+      WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED",
+      authState == AUTH_READY ? "READY" : (authState == AUTH_PENDING ? "PENDING" : "IDLE"));
+    if (consecutiveHttpsFails > 0) {
+      Serial.printf("[DIAG] Last HTTPS success: %lu s ago\n", (now - lastHttpsSuccessMs) / 1000UL);
+    }
+  }
+
   delay(2);
 }

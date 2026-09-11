@@ -128,6 +128,17 @@ def _cache_path(settings: Settings, pzem_number: int) -> Path:
     return settings.cache_dir / f"history_pzem_{pzem_number}.parquet"
 
 
+def _history_prefix(settings: Settings) -> str:
+    """Return the Firebase path prefix for history data based on data source.
+
+    Live:  history/pzem_N/<unix-seconds>   (written by firmware)
+    Synthetic: ai/synthetic_history/pzem_N/<timestamp>   (written by seed_synthetic_firebase.py)
+    """
+    if settings.data_source == "synthetic":
+        return "ai/synthetic_history"
+    return "history"
+
+
 def _parse_history_snapshot(raw: dict, pzem_number: int) -> tuple[pd.DataFrame, int, int]:
     """Turns Firebase's {"<unix-seconds-as-string>": {...}, ...} object into
     a validated DataFrame. Returns (frame, dropped_rows, duplicate_keys).
@@ -244,7 +255,7 @@ def fetch_meter_history(
 
     if fetch_start <= now:
         try:
-            ref = _db_ref(f"history/pzem_{pzem_number}")
+            ref = _db_ref(f"{_history_prefix(settings)}/pzem_{pzem_number}")
             raw = (
                 ref.order_by_key()
                 .start_at(str(fetch_start))
@@ -307,6 +318,159 @@ def fetch_all_history(
     for n in range(1, settings.pzem_count + 1):
         results[n] = fetch_meter_history(n, settings=settings, force_full_refresh=force_full_refresh)
     return results
+
+
+def cleanup_history_retention(dry_run: bool = True) -> dict:
+    """Safely trim history/pzem_N/ to the newest 60 days of records.
+
+    What it does NOT touch:
+      - meters/pzem_N/                          (never)
+      - ai/                                     (never)
+      - ai/synthetic_history/*                  (never)
+
+    The 60-day cutoff is based on HISTORY_RETENTION_DAYS (default 60)
+    from settings, computed as:  cutoff = now - 60 * 86400  (unix seconds).
+
+    Records with timestamp >= cutoff are preserved.
+    Records with timestamp < cutoff are eligible for deletion.
+
+    :param dry_run:  When True (default), only report what WOULD be
+                     deleted without deleting anything.  When False,
+                     actually delete eligible records.
+    :return:         Summary dict with per-meter counts and a global
+                     dry-run / deletion flag.
+    """
+    from ai.config import get_settings
+
+    settings = get_settings()
+    now = int(time.time())
+    retention_cutoff = now - settings.history_retention_days * 86400
+    # history_retention_days defaults to 60; if somehow different,
+    # the cutoff still respects whatever the loaded setting says.
+
+    # ------------------------------------------------------------------
+    # Gather per-meter statistics (no deletions yet)
+    # ------------------------------------------------------------------
+    meter_stats: dict[int, dict] = {}
+    total_eligible = 0
+    total_preserved = 0
+
+    for pzem_number in range(1, settings.pzem_count + 1):
+        ref = _db_ref(f"history/pzem_{pzem_number}")
+        raw = ref.get()
+
+        eligible = 0
+        preserved = 0
+        invalid_ts = 0  # records with unparseable / missing timestamps
+
+        if not raw:
+            eligible = 0
+            preserved = 0
+        else:
+            for key, value in raw.items():
+                # Key format: "<unix-seconds-as-string>" — matches how the
+                # firmware writes history/pzem_N/<slot> and how
+                # _parse_history_snapshot() parses keys numerically.
+                try:
+                    ts = int(key)
+                except (TypeError, ValueError):
+                    invalid_ts += 1
+                    continue
+
+                # Records with invalid/missing timestamps are NOT blindly
+                # deleted — we preserve them so as not to lose data.
+                if value is None or not isinstance(value, dict):
+                    invalid_ts += 1
+                    continue
+
+                # Preserve records at or beyond the cutoff; delete only
+                # those strictly older than 60 days.
+                if ts < retention_cutoff:
+                    eligible += 1
+                else:
+                    preserved += 1
+
+        meter_stats[pzem_number] = {
+            "eligible_for_deletion": eligible,
+            "preserved_newer_than_60d": preserved,
+            "invalid_or_missing_timestamps": invalid_ts,
+        }
+        total_eligible += eligible
+        total_preserved += preserved
+
+    result = {
+        "mode": "dry-run" if dry_run else "cleanup",
+        "retention_days": settings.history_retention_days,
+        "cutoff_timestamp": retention_cutoff,
+        "meters": meter_stats,
+        "total_eligible_for_deletion": total_eligible,
+        "total_preserved": total_preserved,
+    }
+
+    if dry_run:
+        logger.info(
+            "DRY-RUN: would delete %d history records older than %d days "
+            "across %d meters",
+            total_eligible,
+            settings.history_retention_days,
+            settings.pzem_count,
+        )
+        # also log per-meter
+        for pm, s in meter_stats.items():
+            logger.info(
+                "  pzem_%d: %d eligible, %d preserved, %d invalid timestamps",
+                pm,
+                s["eligible_for_deletion"],
+                s["preserved_newer_than_60d"],
+                s["invalid_or_missing_timestamps"],
+            )
+        result["message"] = (
+            f"DRY-RUN: would delete {total_eligible} records older than "
+            f"{settings.history_retention_days} days; no Firebase writes performed."
+        )
+        return result
+
+    # ---- Actual cleanup mode ----
+    # Delete eligible records from each meter's history node
+    deleted_total = 0
+    for pzem_number in range(1, settings.pzem_count + 1):
+        ref = _db_ref(f"history/pzem_{pzem_number}")
+        raw = ref.get()
+
+        if not raw:
+            continue
+
+        keys_to_delete = []
+        for key in raw.keys():
+            try:
+                ts = int(key)
+            except (TypeError, ValueError):
+                # Skip records with invalid timestamps — never delete those.
+                continue
+            # Delete only records strictly older than the 60-day cutoff.
+            if ts < retention_cutoff:
+                keys_to_delete.append(key)
+
+        for key in keys_to_delete:
+            ref.child(key).delete()
+            deleted_total += 1
+
+        logger.info(
+            "CLEANUP: pzem_%d: deleted %d record(s) older than %d days, "
+            "preserved %d newer record(s)",
+            pzem_number,
+            len(keys_to_delete),
+            settings.history_retention_days,
+            meter_stats[pzem_number]["preserved_newer_than_60d"],
+        )
+
+    result["message"] = (
+        f"CLEANUP: deleted {deleted_total} history record(s) older than "
+        f"{settings.history_retention_days} days across {settings.pzem_count} meters. "
+        f"Idempotent: re-running will not delete already-removed records."
+    )
+    logger.info(result["message"])
+    return result
 
 
 def _validate_pzem_number(pzem_number: int, settings: Optional[Settings] = None) -> None:

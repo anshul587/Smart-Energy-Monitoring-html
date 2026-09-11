@@ -102,6 +102,16 @@ class Settings:
         default_factory=lambda: Path(os.environ.get("AI_CACHE_DIR", ".cache"))
     )
 
+    # --- Data source ---
+    # Control whether the AI pipeline reads from live Firebase history
+    # or from synthetic history. "live" is the production default; set
+    # DATA_SOURCE=synthetic to read from ai/synthetic_history/ instead.
+    # This is purely a read-time switch — it does not affect what the
+    # ESP32 writes or what the dashboard displays.
+    data_source: str = field(
+        default_factory=lambda: os.environ.get("DATA_SOURCE", "live")
+    )
+
     # --- Stage 7: peak-load threshold ---
     # ANNOTATION ONLY — never gates detection or persistence, and NOT a
     # Stage 4 fault threshold (FAULT_HIGH_POWER_W in fault_diagnosis.py is
@@ -112,8 +122,22 @@ class Settings:
         default_factory=lambda: _float("PEAK_POWER_THRESHOLD_W", 0.0)
     )
 
-    # --- Anthropic (used starting Stage 16 — declared now so later stages
-    # don't need another config pass) ---
+    # --- Provider configuration ---
+    # Primary LLM provider. Supported: "openrouter" (default), "anthropic"
+    llm_provider: str = field(
+        default_factory=lambda: os.environ.get("LLM_PROVIDER", "openrouter")
+    )
+
+    # OpenRouter ---
+    open_router_api_key: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_API_KEY", "")
+    )
+    open_router_model: str = field(
+        default_factory=lambda: os.environ.get("OPENROUTER_MODEL", "openrouter/free")
+    )
+
+    # Anthropic (optional, kept for backward compatibility) ---
+    # Used only when LLM_PROVIDER is set to "anthropic"
     anthropic_api_key: str = field(
         default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", "")
     )
@@ -123,6 +147,10 @@ class Settings:
             raise ConfigError("PZEM_COUNT must be >= 1")
         if self.history_retention_days < 1:
             raise ConfigError("HISTORY_RETENTION_DAYS must be >= 1")
+        if self.data_source not in ("live", "synthetic"):
+            raise ConfigError(
+                f"DATA_SOURCE must be 'live' or 'synthetic', got {self.data_source!r}"
+            )
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
 
