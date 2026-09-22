@@ -4,7 +4,7 @@ set -e
 # Write Firebase service account JSON from Render Secret to expected path
 if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
   mkdir -p ./secrets
-  echo "$FIREBASE_SERVICE_ACCOUNT_JSON" > ./secrets/firebase-service-account.json
+  printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > ./secrets/firebase-service-account.json
 fi
 
 # Create cache directory

@@ -28,5 +28,7 @@ services:
         value: ./.cache
       - key: FIREBASE_SERVICE_ACCOUNT_PATH
         value: ./secrets/firebase-service-account.json
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        type: secret
     autoDeploy: true
     plan: free
