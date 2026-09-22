@@ -4,7 +4,7 @@ services:
     env: python
     pythonVersion: "3.11"
     buildCommand: pip install -r requirements.txt
-    startCommand: bash start_render.sh
+    startCommand: sh start_render.sh
     envVars:
       - key: DATA_SOURCE
         value: live

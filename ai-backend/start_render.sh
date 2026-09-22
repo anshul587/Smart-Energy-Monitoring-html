@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # Write Firebase service account JSON from Render Secret to expected path
