@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: ai-backend
+    env: python
+    pythonVersion: "3.11"
+    buildCommand: cd ai-backend && pip install -r requirements.txt
+    startCommand: cd ai-backend && sh start_render.sh
+    envVars:
+      - key: DATA_SOURCE
+        value: live
+      - key: PZEM_COUNT
+        value: "9"
+      - key: HISTORY_RETENTION_DAYS
+        value: "60"
+      - key: BILL_RATE_PER_KWH
+        value: "5.0"
+      - key: API_HOST
+        value: "0.0.0.0"
+      - key: API_PORT
+        value: "8000"
+      - key: FIREBASE_DATABASE_URL
+        value: https://smart-energy-monitoring-5a2a4-default-rtdb.asia-southeast1.firebasedatabase.app
+      - key: LLM_PROVIDER
+        value: openrouter
+      - key: OPENROUTER_MODEL
+        value: openrouter/free
+      - key: AI_CACHE_DIR
+        value: ./.cache
+      - key: FIREBASE_SERVICE_ACCOUNT_PATH
+        value: ./secrets/firebase-service-account.json
+    autoDeploy: true
+    plan: free
