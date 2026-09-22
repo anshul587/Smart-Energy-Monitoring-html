@@ -2,14 +2,20 @@
 set -e
 
 # Write Firebase service account JSON from Render Secret to expected path
-if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ]; then
+# (legacy inline-secret flow; only used when the Secret File mount below is
+# not configured, so it never overwrites the mounted secret).
+if [ -n "$FIREBASE_SERVICE_ACCOUNT_JSON" ] && [ -z "$FIREBASE_SERVICE_ACCOUNT_PATH" ]; then
   mkdir -p ./secrets
   printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > ./secrets/firebase-service-account.json
 fi
 
-# Verify service account JSON exists before starting
-if [ ! -f ./secrets/firebase-service-account.json ]; then
-  echo "ERROR: FIREBASE_SERVICE_ACCOUNT_JSON secret not set. Service account JSON file missing." >&2
+# Verify the configured service-account file exists and is readable before
+# starting. FIREBASE_SERVICE_ACCOUNT_PATH is the Render Secret File mount
+# (or a path from .env on a dev machine); the JSON flow above produces the
+# same default path when used.
+SA_FILE="${FIREBASE_SERVICE_ACCOUNT_PATH:-./secrets/firebase-service-account.json}"
+if [ ! -f "$SA_FILE" ] || [ ! -r "$SA_FILE" ]; then
+  echo "ERROR: Firebase service account file not found or unreadable at $SA_FILE (set FIREBASE_SERVICE_ACCOUNT_PATH)." >&2
   exit 1
 fi
 
