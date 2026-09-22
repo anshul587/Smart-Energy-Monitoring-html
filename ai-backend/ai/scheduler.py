@@ -204,9 +204,15 @@ def run_ai_pipeline(settings, rate: Optional[float] = None) -> dict:
         lambda: anomaly_detection.run_anomaly_detection_pipeline(
             settings=settings, preprocess_results=pre))
 
+    fault_results = _safe_stage(
+        log, "fault_diagnosis",
+        lambda: fault_diagnosis.run_fault_diagnosis_pipeline(
+            preprocess_results=pre, settings=settings))
+
     _safe_stage(log, "persist_anomalies_faults",
                 lambda: persist_ai_results.run_stage_5_pipeline(
-                    preprocess_results=pre, anomaly_results=anomaly_results))
+                    preprocess_results=pre, anomaly_results=anomaly_results,
+                    fault_results=fault_results))
 
     peak_pair = _safe_stage(
         log, "peak_detection",
@@ -221,7 +227,7 @@ def run_ai_pipeline(settings, rate: Optional[float] = None) -> dict:
         log, "maintenance_risk",
         lambda: maintenance_risk.run_maintenance_risk_pipeline(
             settings=settings, preprocess_results=pre,
-            anomaly_results=anomaly_results, fault_events=None, peak_results=peaks))
+            anomaly_results=anomaly_results, fault_events=fault_results, peak_results=peaks))
     risks, _ = (risk_pair if risk_pair is not None else (None, None))
     _safe_stage(log, "stage8_persist",
                 lambda: maintenance_risk.run_stage_8_pipeline(
@@ -248,6 +254,21 @@ def run_ai_pipeline(settings, rate: Optional[float] = None) -> dict:
             log.warning("stage10: bill prediction withheld (%s)", pred.get("reason"))
     except Exception as exc:
         log.error("stage10: bill prediction failed: %s", exc)
+
+    # Stage 16 — AI monitoring status computation & persistence
+    from ai.ai_status import compute_all_ai_status, persist_ai_status
+    pipeline_errors = {}
+    import time as _time
+    _pipeline_log = logging.getLogger("ai.scheduler.pipeline")
+    ai_status_map = compute_all_ai_status(
+        anomaly_results=anomaly_results or {},
+        fault_results_map=fault_results or {},
+        pipeline_errors=pipeline_errors,
+        last_pipeline_run=int(_time.time()),
+    )
+    for _pzem, _entry in ai_status_map.items():
+        persist_ai_status(_entry)
+    logger.info("stage16: AI status computed and persisted for %d meters", len(ai_status_map))
 
     # Stage 11 — energy-saving suggestions (reuses peaks/risk/forecast)
     meters = {}

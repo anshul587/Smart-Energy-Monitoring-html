@@ -29,3 +29,14 @@ Thumbs.db
 
 # Python cache/data
 *.parquet
+
+# Opencode config
+.opencode/
+
+# Generated reports
+ai-backend/reports/
+Dashboard Smart-Monitoring-System/reports/
+*.pdf
+
+# Cache
+ai-backend/.cache/

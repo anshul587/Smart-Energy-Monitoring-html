@@ -49,9 +49,10 @@ const HISTORY_SLOT_MS = 5 * 60 * 1000;              // must match config.h HISTO
    reported a timestamp/lastSeen at all. */
 function meterAgeMs(meter) {
   const lastSeenRaw = meter.lastSeen ?? meter.timestamp;
-  if (lastSeenRaw === undefined || lastSeenRaw === null || lastSeenRaw === "") return null;
+  if (lastSeenRaw === undefined || lastSeenRaw === null || lastSeenRaw === "" || lastSeenRaw === 0) return null;
   const lastSeenMs = timestampMilliseconds(lastSeenRaw);
-  return Number.isFinite(lastSeenMs) ? Date.now() - lastSeenMs : null;
+  if (!Number.isFinite(lastSeenMs) || lastSeenMs <= 0) return null;
+  return Date.now() - lastSeenMs;
 }
 
 /* THE single authoritative LIVE/OFF calculation for a meter. Every place in
@@ -182,7 +183,7 @@ document.head.appendChild(summaryCardLayout);
   const card = document.createElement("article");
   card.className = "summary-card";
   card.innerHTML = `
-    <span class="summary-label">Common frequency</span>
+    <span class="summary-label">Frequency</span>
     <strong id="commonFrequency">0.00 <small>Hz</small></strong>
     <span class="summary-caption" id="frequencyCaption">Waiting for live meter data</span>
   `;
@@ -206,7 +207,7 @@ document.head.appendChild(summaryCardLayout);
     </select>
     <label style="font-size:11px;font-weight:700;color:var(--muted)">PZEM</label>
     <select id="pzemSelect" style="padding:7px 9px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);font-weight:700">
-      <option value="all">All PZEMs</option>
+      <option value="all">All Meters</option>
       <option value="1">PZEM 1</option>
       <option value="2">PZEM 2</option>
       <option value="3">PZEM 3</option>
@@ -714,7 +715,7 @@ const frequencyChart = new Chart($("frequencyChart"), {
   data: {
     labels: [],
     datasets: [{
-      label: "Common frequency",
+      label: "Frequency",
       data: [],
       borderColor: "#1e6bd6",
       backgroundColor: "rgba(30, 107, 214, .12)",
@@ -750,7 +751,7 @@ const frequencyChart = new Chart($("frequencyChart"), {
         cornerRadius: 8,
         displayColors: true,
         callbacks: {
-          label: (context) => `Common frequency: ${Number(context.parsed.y || 0).toFixed(2)} Hz`
+          label: (context) => `Frequency: ${Number(context.parsed.y || 0).toFixed(2)} Hz`
         }
       },
       zoom: {
@@ -1157,22 +1158,26 @@ function renderDashboard() {
 
     if (freshnessIsLive) {
       freshnessBadge.className = "meter-status freshness-badge live";
-      freshnessBadge.textContent = "LIVE";
+      const ageSec = Math.round(ageMs / 1000);
+      freshnessBadge.textContent = `Last update: ${ageSec} sec ago`;
     } else if (ageMs !== null && ageMs > FRESHNESS_TIMEOUT_MS) {
-      // STALE: past the freshness timeout but still has data
       freshnessBadge.className = "meter-status freshness-badge stale";
       const ageSec = Math.round(ageMs / 1000);
       const mins = Math.floor(ageSec / 60);
-      const secs = ageSec % 60;
-      if (mins > 0) {
-        freshnessBadge.textContent = `Last update: ${mins} min ${secs} sec ago`;
+      const hrs = Math.floor(mins / 60);
+      const days = Math.floor(hrs / 24);
+      if (days > 0) {
+        freshnessBadge.textContent = `Last seen: ${days} day${days > 1 ? 's' : ''} ago`;
+      } else if (hrs > 0) {
+        freshnessBadge.textContent = `Last seen: ${hrs} hr${hrs > 1 ? 's' : ''} ago`;
+      } else if (mins > 0) {
+        freshnessBadge.textContent = `Last seen: ${mins} min ${ageSec % 60} sec ago`;
       } else {
-        freshnessBadge.textContent = `Last update: ${secs} sec ago`;
+        freshnessBadge.textContent = `Last seen: ${ageSec} sec ago`;
       }
     } else {
-      // OFFLINE: no data at all
       freshnessBadge.className = "meter-status freshness-badge offline";
-      freshnessBadge.textContent = "OFFLINE";
+      freshnessBadge.textContent = "Last seen: unavailable";
     }
 card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* enables click-to-open popup */
     
@@ -1231,32 +1236,47 @@ card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* en
     const meterAiState = meterAIStates[`pzem_${index + 1}`];
     const aiStatus = card.querySelector(".ai-status");
     if (aiStatus) {
-      if (meterAiState && meterAiState.type && meterAiState.type !== "anomaly" && meterAiState.type !== "fault") {
-        // No active AI anomaly/fault — show NORMAL or NO AI DATA
-        if (!meterAiState.severity || meterAiState.severity === "NORMAL") {
-          aiStatus.className = "ai-status ai-status-normal";
-          aiStatus.innerHTML = `<span class="ai-status-pill">NORMAL</span><span class="ai-status-details">No active anomalies or faults</span>`;
-        } else {
-          aiStatus.className = "ai-status ai-status-normal";
-          aiStatus.innerHTML = `<span class="ai-status-pill">NORMAL</span><span class="ai-status-details">AI monitoring active</span>`;
-        }
-      } else if (meterAiState && meterAiState.type === "anomaly") {
+      const aiStatusType = meterAiState?.ai_status || meterAiState?.type || null;
+      if (aiStatusType === "anomaly") {
         // Active anomaly
         const severity = meterAiState.severity || "NORMAL";
         const scoreDisplay = meterAiState.score !== null ? ` (score: ${Number(meterAiState.score).toFixed(2)})` : "";
         aiStatus.className = `ai-status ai-status-anomaly`;
         aiStatus.innerHTML = `<span class="ai-status-pill">ANOMALY</span><span class="ai-status-details"> ${meterAiState.label}${scoreDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date(meterAiState.timestamp * 1000).toLocaleTimeString()}</span>`;
-      } else if (meterAiState && meterAiState.type === "fault") {
+      } else if (aiStatusType === "fault") {
         // Active fault
         const severity = String(meterAiState.severity || "NORMAL");
         const faultType = String(meterAiState.faultType || "unknown");
         const valueDisplay = meterAiState.measuredValue !== undefined ? ` — ${meterAiState.measuredValue}` : "";
         aiStatus.className = `ai-status ai-status-${severity.toLowerCase() === "emergency" ? "emergency" : severity.toLowerCase() === "warning" ? "warning" : "anomaly"}`;
         aiStatus.innerHTML = `<span class="ai-status-pill">${severity}</span><span class="ai-status-details"> ${faultType}${valueDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date((meterAiState.timestamp || 0) * 1000).toLocaleTimeString()}</span>`;
+      } else if (aiStatusType === "no_event") {
+        // AI ran successfully, no anomaly/fault detected
+        const reason = meterAiState.reason || "AI analysis completed; no anomaly or fault detected";
+        aiStatus.className = "ai-status ai-status-normal";
+        aiStatus.innerHTML = `<span class="ai-status-pill">NO EVENT</span><span class="ai-status-details">${reason}</span>`;
+      } else if (aiStatusType === "insufficient_data") {
+        // Data exists but not enough for AI analysis
+        const reason = meterAiState.reason || "Insufficient historical data for AI analysis";
+        aiStatus.className = "ai-status ai-status-insufficient";
+        aiStatus.innerHTML = `<span class="ai-status-pill">INSUFFICIENT DATA</span><span class="ai-status-details">${reason}</span>`;
+      } else if (aiStatusType === "error") {
+        // Pipeline execution failed
+        const reason = meterAiState.reason || "AI pipeline execution failed";
+        aiStatus.className = "ai-status ai-status-error";
+        aiStatus.innerHTML = `<span class="ai-status-pill">ERROR</span><span class="ai-status-details">${reason}</span>`;
+      } else if (aiStatusType === "not_run") {
+        // Pipeline has not run yet
+        aiStatus.className = "ai-status ai-status-not-run";
+        aiStatus.innerHTML = `<span class="ai-status-pill">NOT RUN</span><span class="ai-status-details">AI pipeline has not generated results for this meter</span>`;
+      } else if (meterAiState && meterAiState.type) {
+        // Fallback: meterAIState exists but no recognized AI status
+        aiStatus.className = "ai-status ai-status-normal";
+        aiStatus.innerHTML = `<span class="ai-status-pill">NORMAL</span><span class="ai-status-details">No active anomalies or faults</span>`;
       } else {
-        // No AI data yet
-        aiStatus.className = "ai-status ai-status-no-data";
-        aiStatus.innerHTML = `<span class="ai-status-pill">NO AI DATA</span><span class="ai-status-details">AI monitoring not yet active</span>`;
+        // No AI data at all - AI has never been run
+        aiStatus.className = "ai-status ai-status-not-run";
+        aiStatus.innerHTML = `<span class="ai-status-pill">NOT RUN</span><span class="ai-status-details">AI pipeline has not been executed for this meter</span>`;
       }
     }
     
@@ -1515,11 +1535,6 @@ function attachLiveListener() {
   );
 }
 
-firebase.auth().signInAnonymously().catch((error) => {
-  console.error("[DASHBOARD] Firebase Auth error", error.code, error.message);
-  showConnectionError("Sign-in failed — see console");
-});
-
 /* STAGE 4: Cache for latest fault diagnosis alerts per PZEM,
    populated by the Firebase 'alerts' child listeners added below. */
 let meterAlerts = {};
@@ -1588,9 +1603,72 @@ function attachFaultAlertListener() {
   );
 }
 
+/* STAGE 16: Load authoritative AI monitoring status from the API.
+   This replaces the dashboard's inference from Firebase child-existence,
+   which cannot distinguish AVAILABLE, NO_EVENT, INSUFFICIENT_DATA, NOT_RUN, ERROR.
+   The API endpoint returns one entry per PZEM with a truthful status field. */
+async function loadAIStatus() {
+  try {
+    const resp = await fetch('/api/v1/ai-status');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (!data.data) return;
+    for (const [key, status] of Object.entries(data.data)) {
+      if (!meterAIStates[key]) {
+        meterAIStates[key] = {};
+      }
+      // Map API status to dashboard meterAIState
+      const aiStatus = status.ai_status || 'NOT_RUN';
+      meterAIStates[key].ai_status = aiStatus;
+      meterAIStates[key].reason = status.reason || '';
+      meterAIStates[key].model_status = status.model_status || null;
+
+      // Only populate type/severity/timestamp for display if AI actually has data
+      if (aiStatus === 'AVAILABLE') {
+        if (status.anomaly_label) {
+          meterAIStates[key].type = 'anomaly';
+          meterAIStates[key].label = status.anomaly_label;
+          meterAIStates[key].score = status.anomaly_score;
+          meterAIStates[key].severity = status.severity || 'NORMAL';
+          meterAIStates[key].timestamp = status.timestamp;
+        } else if (status.fault_type) {
+          meterAIStates[key].type = 'fault';
+          meterAIStates[key].faultType = status.fault_type;
+          meterAIStates[key].severity = status.severity || 'NORMAL';
+          meterAIStates[key].measuredValue = status.measured_value;
+          meterAIStates[key].reason = status.reason || '';
+          meterAIStates[key].timestamp = status.timestamp;
+        } else {
+          // AVAILABLE but no anomaly/fault details -> NO_EVENT
+          meterAIStates[key].type = 'no_event';
+          meterAIStates[key].severity = 'NORMAL';
+          meterAIStates[key].reason = 'AI analysis completed; no anomaly or fault detected';
+        }
+      } else if (aiStatus === 'NO_EVENT') {
+        meterAIStates[key].type = 'no_event';
+        meterAIStates[key].severity = 'NORMAL';
+        meterAIStates[key].reason = status.reason || 'AI analysis completed; no anomaly or fault detected';
+      } else if (aiStatus === 'INSUFFICIENT_DATA') {
+        meterAIStates[key].type = 'insufficient_data';
+        meterAIStates[key].severity = 'NORMAL';
+        meterAIStates[key].reason = status.reason || 'Insufficient historical data for AI analysis';
+      } else if (aiStatus === 'ERROR') {
+        meterAIStates[key].type = 'error';
+        meterAIStates[key].severity = 'WARNING';
+        meterAIStates[key].reason = status.reason || 'AI pipeline execution failed';
+      }
+      // NOT_RUN keeps meterAIStates[key] with type/severity unset -> shows appropriate status
+    }
+  } catch (e) {
+    console.warn('[AI] Failed to load AI status from API:', e);
+  }
+}
+
 /* STAGE 6: Firebase listeners for AI anomaly and fault results written by
    the AI backend Stage 5. Anomalies at /ai/anomalies/pzem_N/<timestamp>,
-   faults at /ai/faults/pzem_N/<timestamp>. */
+   faults at /ai/faults/pzem_N/<timestamp>.
+   NOTE: loadAIStatus() from the API is the authoritative source for AI status.
+   Firebase listeners provide real-time updates as they happen. */
 function attachAIImplListener() {
   /* Anomalies: /ai/anomalies/pzem_N/<timestamp> */
   firebase.database().ref("ai/anomalies").on(
@@ -1675,9 +1753,11 @@ firebase.auth().signInAnonymously().catch((error) => {
 
 firebase.auth().onAuthStateChanged((user) => {
   if (user) {
+    loadAIStatus();
     attachLiveListener();
     attachFaultAlertListener();
     attachAIImplListener();
+    initForecastPanel();
   }
 });
 
@@ -1835,10 +1915,8 @@ const forecastCache = {};            // leaf ("pzem_N" | "system") -> latest rec
 let energySavingCache = null;        // latest /ai/energy_saving record (or null)
 const FORECAST_DEMO = new URLSearchParams(location.search).has("forecastDemo");
 
-// Init is deferred to here (after the `let forecastChart` declaration above is
-// initialized) so ensureForecastChart() does not hit a temporal-dead-zone
-// ReferenceError when called during top-level script execution.
-initForecastPanel();
+// initForecastPanel() is now called inside onAuthStateChanged callback
+// after Firebase anonymous auth completes, so RTDB reads are authorized.
 
 function getRuntimeState(n) {
   if (!meterRuntimeState[n]) {
@@ -2212,7 +2290,7 @@ function renderEnergySaving() {
   if (!energySavingCache || !energySavingCache.recommendations ||
       energySavingCache.recommendations.length === 0) {
     if (note) note.innerHTML = `<span class="forecast-pill none">No suggestions</span>`;
-     list.innerHTML = `<p class="es-empty">No energy-saving suggestions yet. Recommendations are generated from historical data and AI analysis.</p>`;
+     list.innerHTML = `<p class="es-empty">No recommendations yet. Recommendations are generated from historical data and AI analysis.</p>`;
     return;
   }
   const recs = energySavingCache.recommendations.slice()
@@ -2843,30 +2921,42 @@ function refreshFreshnessOnly() {
     // STAGE 6: Maintain AI status area based on current AI state cache
     const meterAiState = meterAIStates[`pzem_${index + 1}`];
     const aiStatus = card.querySelector(".ai-status");
-    if (aiStatus) {
-      if (meterAiState && meterAiState.type && meterAiState.type !== "anomaly" && meterAiState.type !== "fault") {
-        // No active AI anomaly/fault — show NORMAL
-        aiStatus.className = "ai-status ai-status-normal";
-        aiStatus.innerHTML = `<span class="ai-status-pill">NORMAL</span><span class="ai-status-details">AI monitoring active</span>`;
-      } else if (meterAiState && meterAiState.type === "anomaly") {
-        // Active anomaly
-        const severity = meterAiState.severity || "NORMAL";
-        const scoreDisplay = meterAiState.score !== null ? ` (score: ${Number(meterAiState.score).toFixed(2)})` : "";
-        aiStatus.className = `ai-status ai-status-anomaly`;
-        aiStatus.innerHTML = `<span class="ai-status-pill">ANOMALY</span><span class="ai-status-details"> ${meterAiState.label}${scoreDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date(meterAiState.timestamp * 1000).toLocaleTimeString()}</span>`;
-      } else if (meterAiState && meterAiState.type === "fault") {
-        // Active fault
-        const severity = String(meterAiState.severity || "NORMAL");
-        const faultType = String(meterAiState.faultType || "unknown");
-        const valueDisplay = meterAiState.measuredValue !== undefined ? ` — ${meterAiState.measuredValue}` : "";
-        aiStatus.className = `ai-status ai-status-${severity.toLowerCase() === "emergency" ? "emergency" : severity.toLowerCase() === "warning" ? "warning" : "anomaly"}`;
-        aiStatus.innerHTML = `<span class="ai-status-pill">${severity}</span><span class="ai-status-details"> ${faultType}${valueDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date((meterAiState.timestamp || 0) * 1000).toLocaleTimeString()}</span>`;
-      } else {
-        // No AI data yet
-        aiStatus.className = "ai-status ai-status-no-data";
-        aiStatus.innerHTML = `<span class="ai-status-pill">NO AI DATA</span><span class="ai-status-details">AI monitoring not yet active</span>`;
+      if (aiStatus) {
+        const aiStatusType = meterAiState?.ai_status || meterAiState?.type || null;
+        if (aiStatusType === "anomaly") {
+          const severity = meterAiState.severity || "NORMAL";
+          const scoreDisplay = meterAiState.score !== null ? ` (score: ${Number(meterAiState.score).toFixed(2)})` : "";
+          aiStatus.className = `ai-status ai-status-anomaly`;
+          aiStatus.innerHTML = `<span class="ai-status-pill">ANOMALY</span><span class="ai-status-details"> ${meterAiState.label}${scoreDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date(meterAiState.timestamp * 1000).toLocaleTimeString()}</span>`;
+        } else if (aiStatusType === "fault") {
+          const severity = String(meterAiState.severity || "NORMAL");
+          const faultType = String(meterAiState.faultType || "unknown");
+          const valueDisplay = meterAiState.measuredValue !== undefined ? ` — ${meterAiState.measuredValue}` : "";
+          aiStatus.className = `ai-status ai-status-${severity.toLowerCase() === "emergency" ? "emergency" : severity.toLowerCase() === "warning" ? "warning" : "anomaly"}`;
+          aiStatus.innerHTML = `<span class="ai-status-pill">${severity}</span><span class="ai-status-details"> ${faultType}${valueDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date((meterAiState.timestamp || 0) * 1000).toLocaleTimeString()}</span>`;
+        } else if (aiStatusType === "no_event") {
+          const reason = meterAiState.reason || "AI analysis completed; no anomaly or fault detected";
+          aiStatus.className = "ai-status ai-status-normal";
+          aiStatus.innerHTML = `<span class="ai-status-pill">NO EVENT</span><span class="ai-status-details">${reason}</span>`;
+        } else if (aiStatusType === "insufficient_data") {
+          const reason = meterAiState.reason || "Insufficient historical data for AI analysis";
+          aiStatus.className = "ai-status ai-status-insufficient";
+          aiStatus.innerHTML = `<span class="ai-status-pill">INSUFFICIENT DATA</span><span class="ai-status-details">${reason}</span>`;
+        } else if (aiStatusType === "error") {
+          const reason = meterAiState.reason || "AI pipeline execution failed";
+          aiStatus.className = "ai-status ai-status-error";
+          aiStatus.innerHTML = `<span class="ai-status-pill">ERROR</span><span class="ai-status-details">${reason}</span>`;
+        } else if (aiStatusType === "not_run") {
+          aiStatus.className = "ai-status ai-status-not-run";
+          aiStatus.innerHTML = `<span class="ai-status-pill">NOT RUN</span><span class="ai-status-details">AI pipeline has not generated results for this meter</span>`;
+        } else if (meterAiState && meterAiState.type) {
+          aiStatus.className = "ai-status ai-status-normal";
+          aiStatus.innerHTML = `<span class="ai-status-pill">NORMAL</span><span class="ai-status-details">No active anomalies or faults</span>`;
+        } else {
+          aiStatus.className = "ai-status ai-status-not-run";
+          aiStatus.innerHTML = `<span class="ai-status-pill">NOT RUN</span><span class="ai-status-details">AI pipeline has not been executed for this meter</span>`;
+        }
       }
-    }
   });
 
   const online = entries.filter(([, meter]) => isMeterFresh(meter));

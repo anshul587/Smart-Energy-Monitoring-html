@@ -27,6 +27,7 @@ from typing import Any, Optional, Tuple
 from flask import Blueprint, Flask, jsonify, request, send_file
 
 from . import api_store
+from . import electrical_analysis as ea
 from . import ask_bob
 from .config import get_settings
 
@@ -104,17 +105,15 @@ def _parse_limit() -> Tuple[Optional[int], Optional[Tuple[Any, int]]]:
 
 def _filter_records(records: list[dict], pzem: Optional[int], start: Optional[int],
                     end: Optional[int], severity: Optional[str], severity_key: str,
-                    risk: Optional[str], priority: Optional[str]) -> list[dict]:
+                    risk: Optional[str], priority: Optional[str],
+                    fault_type: Optional[str] = None) -> list[dict]:
     out = []
     for r in records:
         ts = api_store.record_timestamp(r)
         pz = api_store.record_pzem(r)
         if pzem is not None:
-            # energy_saving records are fleet-wide (pzem None) -> match via recommendations
             if pz is None:
-                recs = r.get("recommendations", []) or []
-                if not any(int(x.get("pzem_number", 0)) == pzem for x in recs if isinstance(x, dict)):
-                    continue
+                continue
             elif pz != pzem:
                 continue
         if start is not None and ts is not None and ts < start:
@@ -126,9 +125,12 @@ def _filter_records(records: list[dict], pzem: Optional[int], start: Optional[in
         if risk is not None and str(r.get("risk_level", "")).lower() != risk.lower():
             continue
         if priority is not None:
-            recs = r.get("recommendations", []) or []
-            if not any(str(x.get("priority", "")).lower() == priority.lower() for x in recs if isinstance(x, dict)):
-                continue
+            if str(r.get("priority", "")).lower() != priority.lower():
+                recs = r.get("recommendations", []) or []
+                if not any(str(x.get("priority", "")).lower() == priority.lower() for x in recs if isinstance(x, dict)):
+                    continue
+        if fault_type is not None and str(r.get("fault_type", "")).lower() != fault_type.lower():
+            continue
         out.append(r)
     out.sort(key=lambda r: api_store.record_timestamp(r) or 0, reverse=True)
     return out
@@ -221,7 +223,7 @@ def meter_detail(pzem_number: int):
 # AI result endpoints
 # ---------------------------------------------------------------------------
 
-def _ai_route(reader, severity_key="severity", risk_key="risk_level", priority=False):
+def _ai_route(reader, severity_key="severity", risk_key="risk_level", priority=False, fault_type_key=None):
     pzem, perr = _parse_pzem()
     if perr:
         return perr
@@ -239,12 +241,13 @@ def _ai_route(reader, severity_key="severity", risk_key="risk_level", priority=F
     severity = request.args.get("severity")
     risk = request.args.get("risk")
     pr = request.args.get("priority") if priority else None
+    ft = request.args.get("fault_type") if fault_type_key else None
     try:
         records = reader()
     except Exception:
         return _err("data_unavailable", "AI data source is unavailable", 503)
     filtered = _filter_records(records, pzem, start, end, severity, severity_key,
-                               risk, pr)
+                                risk, pr, fault_type=ft)
     return _wrap(filtered, limit, pzem=pzem, start=start, end=end)
 
 
@@ -316,6 +319,119 @@ def bill_prediction():
 @bp.route("/energy-saving", methods=["GET"])
 def energy_saving():
     return _ai_route(api_store.read_energy_saving, priority=True)
+
+
+@bp.route("/diagnostic-recommendations", methods=["GET"])
+def diagnostic_recommendations():
+    return _ai_route(api_store.read_diagnostic_recommendations,
+                      severity_key="severity", priority=True, fault_type_key=True)
+
+
+@bp.route("/ai-status", methods=["GET"])
+def ai_status():
+    """Return authoritative AI monitoring status per PZEM.
+
+    Distinguishes: AVAILABLE, NO_EVENT, INSUFFICIENT_DATA, NOT_RUN, ERROR.
+    This replaces the dashboard's inference from Firebase child-existence,
+    which cannot distinguish these states.
+    """
+    try:
+        from ai.ai_status import read_all_ai_status
+        status_map = read_all_ai_status()
+    except Exception:
+        return _err("data_unavailable", "AI status source is unavailable", 503)
+
+    result = {}
+    for pzem, entry in sorted(status_map.items()):
+        result[f"pzem_{pzem}"] = {
+            "pzem_number": entry.pzem_number,
+            "ai_status": entry.status.value,
+            "severity": entry.severity,
+            "anomaly_label": entry.anomaly_label,
+            "anomaly_score": entry.anomaly_score,
+            "fault_type": entry.fault_type,
+            "measured_value": entry.measured_value,
+            "reason": entry.reason,
+            "timestamp": entry.timestamp,
+            "model_status": entry.model_status,
+            "last_pipeline_run": entry.last_pipeline_run,
+        }
+    return _ok(result, {"count": len(result)})
+
+
+@bp.route("/history/pzem/<int:pzem_number>", methods=["GET"])
+def history_pzem(pzem_number: int):
+    """Historical analysis for a single PZEM meter."""
+    start, serr = _parse_ts("start")
+    if serr:
+        return serr
+    end, eerr = _parse_ts("end")
+    if eerr:
+        return eerr
+    if start is not None and end is not None and start > end:
+        return _err("invalid_timestamp", "start must be <= end")
+    if not (1 <= pzem_number <= _pzem_count()):
+        return _err("invalid_pzem", f"pzem_number must be between 1 and {_pzem_count()}")
+    try:
+        result = ea.analyze_pzem_history(pzem_number, start=start, end=end)
+    except Exception:
+        return _err("data_unavailable", "AI data source is unavailable", 503)
+    return _ok(ea.pzem_result_to_dict(result))
+
+
+@bp.route("/history/multi", methods=["GET"])
+def history_multi():
+    """Historical comparison for multiple PZEMs."""
+    pzem_raw = request.args.get("pzem")
+    if pzem_raw is None or pzem_raw == "":
+        return _err("invalid_pzem", "pzem query parameter is required (comma-separated list, e.g. pzem=1,2,3)")
+    try:
+        pzem_numbers = [int(x.strip()) for x in pzem_raw.split(",")]
+    except ValueError:
+        return _err("invalid_pzem", "pzem must be a comma-separated list of integers")
+    for n in pzem_numbers:
+        if not (1 <= n <= _pzem_count()):
+            return _err("invalid_pzem", f"pzem_number must be between 1 and {_pzem_count()}")
+    start, serr = _parse_ts("start")
+    if serr:
+        return serr
+    end, eerr = _parse_ts("end")
+    if eerr:
+        return eerr
+    if start is not None and end is not None and start > end:
+        return _err("invalid_timestamp", "start must be <= end")
+    try:
+        results = ea.analyze_multiple_pzems(pzem_numbers, start=start, end=end)
+    except Exception:
+        return _err("data_unavailable", "AI data source is unavailable", 503)
+    # Serialize each PZEM result
+    serialized = {}
+    for n, r in results.items():
+        serialized[str(n)] = ea.pzem_result_to_dict(r)
+    # Also compute system aggregation if all are OK
+    valid_results = {int(n): r for n, r in results.items() if r.status == "OK" and r.sample_count > 0}
+    if valid_results:
+        system = ea._aggregate_to_system(valid_results)
+        serialized["system"] = ea.system_result_to_dict(system)
+    return _ok(serialized)
+
+
+@bp.route("/history/system", methods=["GET"])
+def history_system():
+    """System-wide historical analysis (all PZEMs)."""
+    start, serr = _parse_ts("start")
+    if serr:
+        return serr
+    end, eerr = _parse_ts("end")
+    if eerr:
+        return eerr
+    if start is not None and end is not None and start > end:
+        return _err("invalid_timestamp", "start must be <= end")
+    try:
+        system = ea.analyze_system_history(start=start, end=end)
+    except Exception:
+        return _err("data_unavailable", "AI data source is unavailable", 503)
+    return _ok(ea.system_result_to_dict(system))
 
 
 # ---------------------------------------------------------------------------
@@ -467,6 +583,7 @@ def openapi():
             f"/forecast": {"get": {"summary": "Forecast results", "parameters": [_qp("pzem_number", "integer"), _qp("start", "integer"), _qp("end", "integer"), _qp("limit", "integer"), _qp("horizon", "string")], "responses": {"200": {"description": "ok"}}}},
             f"/bill-prediction": {"get": {"summary": "Latest bill prediction", "parameters": [_qp("limit", "integer")], "responses": {"200": {"description": "ok"}}}},
             f"/energy-saving": {"get": {"summary": "Energy-saving recommendations", "parameters": [_qp("pzem_number", "integer"), _qp("start", "integer"), _qp("end", "integer"), _qp("limit", "integer"), _qp("priority", "string")], "responses": {"200": {"description": "ok"}}}},
+            f"/diagnostic-recommendations": {"get": {"summary": "Diagnostic recommendations", "parameters": [_qp("pzem_number", "integer"), _qp("start", "integer"), _qp("end", "integer"), _qp("limit", "integer"), _qp("severity", "string"), _qp("fault_type", "string")], "responses": {"200": {"description": "ok"}}}},
             f"/reports/monthly": {"get": {"summary": "Monthly report metadata", "responses": {"200": {"description": "ok"}}}},
             f"/summary": {"get": {"summary": "System summary", "responses": {"200": {"description": "ok"}}}},
             f"/ask": {"post": {"summary": "Ask BOB a question", "parameters": [{"name": "question", "in": "query", "required": True, "schema": {"type": "string"}}], "responses": {"200": {"description": "ok"}}}},
@@ -510,5 +627,5 @@ if __name__ == "__main__":
     # import keeps the relative imports above working in both contexts.
     from ai.api_server import create_app
 
-    create_app().run(host=os.environ.get("API_HOST", "127.0.0.1"),
+    create_app().run(host=os.environ.get("API_HOST", "0.0.0.0"),
                      port=int(os.environ.get("API_PORT", "8000")))

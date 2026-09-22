@@ -425,6 +425,10 @@ body.dark .es-badge.es-badge-LOW { background: #4ade80; color: #06210a; }
 .ai-status-warning { background: var(--orange-soft); color: var(--orange); }
 .ai-status-emergency { background: var(--danger-soft); color: var(--danger); }
 .ai-status-no-data { background: var(--surface-soft); color: var(--muted); }
+.ai-status-insufficient { background: var(--yellow-soft); color: var(--yellow); }
+.ai-status-error { background: var(--danger-soft); color: var(--danger); }
+.ai-status-not-run { background: var(--surface-soft); color: var(--muted); }
+.ai-status-no-event { background: var(--green-soft); color: var(--green); }
 
 /* AI alert badges in fault-info */
 .ai-alert-emergency {
