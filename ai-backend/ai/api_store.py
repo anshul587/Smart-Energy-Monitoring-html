@@ -173,6 +173,10 @@ def read_energy_saving() -> list[dict]:
     return _cached("ai/energy_saving", lambda: _read_namespace("ai/energy_saving"))
 
 
+def read_diagnostic_recommendations() -> list[dict]:
+    return _cached("ai/diagnostic_recommendations", lambda: _read_pzem_collection("ai/diagnostic_recommendations", False))
+
+
 # ---------------------------------------------------------------------------
 # Normalisation helpers (used by filters + summary)
 # ---------------------------------------------------------------------------
