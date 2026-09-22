@@ -392,3 +392,81 @@ def test_actual_energy_aggregation_via_stage1_loader(tmp_path: Path, monkeypatch
     monkeypatch.setattr("ai.data_loader.fetch_all_history", fake_fetch)
     total = bp.compute_actual_energy_from_history(settings=_settings(tmp_path))
     assert total == pytest.approx(200.0)
+
+
+# ---------------------------------------------------------------------------
+# Bill rate consistency tests
+# ---------------------------------------------------------------------------
+
+class TestBillRateConsistency:
+    """Verify BILL_RATE_PER_KWH is consistently applied across all bill prediction entry points."""
+
+    def test_rate_4_produces_correct_bill(self, monkeypatch, tmp_path):
+        import os
+        from ai import bill_prediction as bp
+        os.environ["BILL_RATE_PER_KWH"] = "4.0"
+        monkeypatch.setenv("BILL_RATE_PER_KWH", "4.0")
+        rate = bp._get_bill_rate()
+        assert rate == 4.0
+        fc = {"status": "FORECAST", "forecast_power_w": [1000.0]}
+        result = bp.predict_bill(100.0, fc, rate=rate, billing_period="30d")
+        assert result["status"] == "OK"
+        assert result["rate"] == 4.0
+        assert result["estimated_bill"] == pytest.approx((100.0 + 0.083333) * 4.0, abs=0.01)
+
+    def test_rate_5_produces_correct_bill(self, monkeypatch, tmp_path):
+        import os
+        from ai import bill_prediction as bp
+        os.environ["BILL_RATE_PER_KWH"] = "5.0"
+        monkeypatch.setenv("BILL_RATE_PER_KWH", "5.0")
+        rate = bp._get_bill_rate()
+        assert rate == 5.0
+        fc = {"status": "FORECAST", "forecast_power_w": [1000.0]}
+        result = bp.predict_bill(100.0, fc, rate=rate, billing_period="30d")
+        assert result["status"] == "OK"
+        assert result["rate"] == 5.0
+        assert result["estimated_bill"] == pytest.approx((100.0 + 0.083333) * 5.0, abs=0.01)
+
+    def test_different_rates_produce_different_bills(self, monkeypatch, tmp_path):
+        import os
+        from ai import bill_prediction as bp
+        fc = {"status": "FORECAST", "forecast_power_w": [1000.0]}
+        os.environ["BILL_RATE_PER_KWH"] = "3.0"
+        monkeypatch.setenv("BILL_RATE_PER_KWH", "3.0")
+        r3 = bp.predict_bill(100.0, fc, rate=bp._get_bill_rate(), billing_period="30d")
+        os.environ["BILL_RATE_PER_KWH"] = "7.0"
+        monkeypatch.setenv("BILL_RATE_PER_KWH", "7.0")
+        r7 = bp.predict_bill(100.0, fc, rate=bp._get_bill_rate(), billing_period="30d")
+        assert r3["estimated_bill"] != r7["estimated_bill"]
+        assert r3["estimated_bill"] < r7["estimated_bill"]
+
+    def test_rate_default_from_environment(self, monkeypatch, tmp_path):
+        import os
+        from ai import bill_prediction as bp
+        os.environ["BILL_RATE_PER_KWH"] = "6.0"
+        monkeypatch.setenv("BILL_RATE_PER_KWH", "6.0")
+        assert bp._get_bill_rate() == 6.0
+        fc = {"status": "FORECAST", "forecast_power_w": [1000.0]}
+        result = bp.predict_bill(100.0, fc, rate=None, billing_period="30d")
+        assert result["status"] == "OK"
+        assert result["rate"] == 6.0
+
+    def test_ui_backend_rate_consistency(self, monkeypatch, tmp_path):
+        import os
+        from ai import bill_prediction as bp
+        os.environ["BILL_RATE_PER_KWH"] = "4.5"
+        monkeypatch.setenv("BILL_RATE_PER_KWH", "4.5")
+        rate = bp._get_bill_rate()
+        fc = {"status": "FORECAST", "forecast_power_w": [1000.0]}
+        result = bp.predict_bill(100.0, fc, rate=rate, billing_period="30d")
+        assert result["rate"] == 4.5
+
+    def test_zero_rate_no_bill(self, monkeypatch, tmp_path):
+        import os
+        from ai import bill_prediction as bp
+        os.environ["BILL_RATE_PER_KWH"] = "0.0"
+        monkeypatch.setenv("BILL_RATE_PER_KWH", "0.0")
+        fc = {"status": "FORECAST", "forecast_power_w": [1000.0]}
+        result = bp.predict_bill(100.0, fc, rate=bp._get_bill_rate(), billing_period="30d")
+        assert result["status"] == "OK"
+        assert result["estimated_bill"] is None

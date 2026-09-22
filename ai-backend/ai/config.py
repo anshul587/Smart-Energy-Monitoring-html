@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 # deployment (e.g. a container), these are normally injected directly as
 # environment variables and .env may not exist at all — that's fine, this
 # is a no-op if the file isn't there.
-load_dotenv()
+load_dotenv(override=True)
 
 
 class ConfigError(RuntimeError):

@@ -30,6 +30,7 @@ from ai.config import Settings, get_settings
 from ai.preprocessing import PreprocessResult
 from ai.fault_diagnosis import FaultEvent, run_fault_diagnosis_pipeline
 from ai.anomaly_detection import AnomalyDetectionResult, run_anomaly_detection_pipeline
+from ai.diagnostic_recommendation import DiagnosticRecommendation
 
 logger = logging.getLogger("ai.persist_ai_results")
 
@@ -65,9 +66,12 @@ def _init_firebase():
         )
 
     cred = credentials.Certificate(cred_path)
-    _firebase_app = firebase_admin.initialize_app(
-        cred, {"databaseURL": settings.firebase_database_url}
-    )
+    try:
+        _firebase_app = firebase_admin.initialize_app(
+            cred, {"databaseURL": settings.firebase_database_url}
+        )
+    except ValueError:
+        _firebase_app = firebase_admin.get_app()
     logger.info("Firebase Admin SDK initialized against %s", settings.firebase_database_url)
     return _firebase_app
 
@@ -396,12 +400,130 @@ def persist_fault_results(
 
 
 # ---------------------------------------------------------------------------
+# Diagnostic Recommendation persistence (Stage 4)
+# ---------------------------------------------------------------------------
+
+def _extract_pzem_number(pzem_system: str) -> Optional[int]:
+    """Extract PZEM number from 'PZEM-N' or return None for 'SYSTEM'."""
+    if pzem_system == "SYSTEM" or pzem_system is None:
+        return None
+    if isinstance(pzem_system, str) and pzem_system.startswith("PZEM-"):
+        try:
+            return int(pzem_system.split("-")[1])
+        except (IndexError, ValueError):
+            return None
+    return None
+
+
+def _diagnostic_recommendation_payload(rec: DiagnosticRecommendation) -> dict:
+    """Build the Firebase payload for a DiagnosticRecommendation.
+
+    Persists all DiagnosticRecommendation fields. Serializes tuples as
+    lists for JSON/Firebase safety. Handles None values transparently.
+    """
+    pzem = _extract_pzem_number(rec.pzem_system)
+    payload: dict = {
+        "recommendation_id": rec.recommendation_id,
+        "timestamp": rec.timestamp,
+        "pzem_number": pzem,
+        "pzem_system": rec.pzem_system,
+        "condition": rec.condition,
+        "fault_type": rec.fault_type,
+        "severity": rec.severity,
+        "priority": rec.priority,
+        "probable_cause": rec.probable_cause,
+        "why_it_happened": rec.why_it_happened,
+        "evidence": rec.evidence,
+        "what_to_check": rec.what_to_check,
+        "what_to_do_now": rec.what_to_do_now,
+        "corrective_action": rec.corrective_action,
+        "urgency": rec.urgency,
+        "maintenance_required": rec.maintenance_required,
+        "maintenance_timing": rec.maintenance_timing,
+        "energy_impact_kwh": rec.energy_impact_kwh,
+        "cost_impact": rec.cost_impact,
+        "confidence": rec.confidence,
+        "source_stages": list(rec.source_stages),
+    }
+    return payload
+
+
+def write_diagnostic_recommendation(rec: DiagnosticRecommendation) -> bool:
+    """Write one diagnostic recommendation to Firebase at
+    /ai/diagnostic_recommendations/pzem_N/<timestamp>.
+
+    Returns True if the write was attempted (even if already existed),
+    False if validation failed or a fatal error prevented the attempt.
+    """
+    try:
+        from .config import get_settings
+        settings = get_settings()
+        pzem = _extract_pzem_number(rec.pzem_system)
+        if pzem is not None:
+            if not (1 <= pzem <= settings.pzem_count):
+                raise ValueError(f"pzem_number {pzem} out of range")
+        _validate_timestamp(rec.timestamp)
+    except (ValueError, TypeError) as exc:
+        logger.warning("Invalid diagnostic recommendation: %s", exc)
+        return False
+
+    payload = _diagnostic_recommendation_payload(rec)
+    pzem = payload["pzem_number"]
+    ts = payload["timestamp"]
+
+    try:
+        ref = _db_ref(f"ai/diagnostic_recommendations/pzem_{pzem}")
+        existing = ref.child(str(ts)).get()
+        if existing is not None:
+            logger.debug(
+                "Diagnostic recommendation already exists for PZEM %s timestamp %s; skipping.",
+                pzem, ts,
+            )
+            return True
+
+        ref.child(str(ts)).set(payload)
+        logger.info(
+            "Wrote diagnostic recommendation for PZEM %s timestamp %s to /ai/diagnostic_recommendations/pzem_%s/%s",
+            pzem, ts, pzem, ts,
+        )
+        return True
+    except Exception as exc:
+        logger.error(
+            "Firebase write failed for PZEM %s diagnostic recommendation timestamp %s: %s",
+            pzem, ts, exc,
+        )
+        return False
+
+
+def persist_diagnostic_recommendations(
+    recommendations_map: dict[int, list[DiagnosticRecommendation]],
+) -> dict[int, int]:
+    """Persist diagnostic recommendations for all PZEMs.
+
+    recommendations_map: PZEM number -> list of DiagnosticRecommendation.
+    Returns PZEM number -> count of writes attempted.
+    """
+    settings = get_settings()
+    counts: dict[int, int] = {}
+    for pzem_number in range(1, settings.pzem_count + 1):
+        recs = recommendations_map.get(pzem_number, [])
+        written = 0
+        for rec in recs:
+            ok = write_diagnostic_recommendation(rec)
+            if ok:
+                written += 1
+        counts[pzem_number] = written
+    return counts
+
+
+# ---------------------------------------------------------------------------
 # High-level convenience: run Stages 3-5 end-to-end
 # ---------------------------------------------------------------------------
 
 def run_stage_5_pipeline(
     preprocess_results: dict[int, PreprocessResult],
     anomaly_results: Optional[dict[int, AnomalyDetectionResult]] = None,
+    diagnostic_recommendations_map: Optional[dict[int, list[DiagnosticRecommendation]]] = None,
 ) -> dict[str, dict[int, int]]:
     """Run Stages 3 + 5 (and implicitly Stage 4 via the fault pipeline).
 
@@ -422,5 +544,8 @@ def run_stage_5_pipeline(
 
     anomaly_counts = persist_anomaly_results(anomaly_results)
     fault_counts = persist_fault_results(preprocess_results)
+    diag_counts: dict[int, int] = {}
+    if diagnostic_recommendations_map is not None:
+        diag_counts = persist_diagnostic_recommendations(diagnostic_recommendations_map)
 
-    return {"anomalies": anomaly_counts, "faults": fault_counts}
+    return {"anomalies": anomaly_counts, "faults": fault_counts, "diagnostic_recommendations": diag_counts}

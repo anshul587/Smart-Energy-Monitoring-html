@@ -87,9 +87,12 @@ def _init_firebase(settings: Settings):
         )
 
     cred = credentials.Certificate(str(cred_path))
-    _firebase_app = firebase_admin.initialize_app(
-        cred, {"databaseURL": settings.firebase_database_url}
-    )
+    try:
+        _firebase_app = firebase_admin.initialize_app(
+            cred, {"databaseURL": settings.firebase_database_url}
+        )
+    except ValueError:
+        _firebase_app = firebase_admin.get_app()
     logger.info("Firebase Admin SDK initialized against %s", settings.firebase_database_url)
     return _firebase_app
 

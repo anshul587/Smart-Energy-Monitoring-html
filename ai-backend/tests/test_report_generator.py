@@ -19,10 +19,19 @@ DASHBOARD = os.path.normpath(
     os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                  "..", "Dashboard Smart-Monitoring-System", "index.html"))
 
+import datetime as _dt
+_CUR = _dt.datetime.now(_dt.timezone.utc)
+CUR_YEAR = _CUR.year
+CUR_MONTH = _CUR.month
+
+
+YM = f"{CUR_YEAR}-{CUR_MONTH:02d}"
 
 def _frame(n=288, power=200.0, slot=300, base_ts=None):
     if base_ts is None:
-        base_ts = int(datetime.datetime(2026, 8, 1, tzinfo=UTC).timestamp())
+        import datetime
+        now = datetime.datetime.now(datetime.timezone.utc)
+        base_ts = int(datetime.datetime(now.year, now.month, 1, tzinfo=datetime.timezone.utc).timestamp())
     ts = np.arange(base_ts, base_ts + n * slot, slot)
     return pd.DataFrame({
         "timestamp": ts,
@@ -35,9 +44,15 @@ def _frame(n=288, power=200.0, slot=300, base_ts=None):
     })
 
 
-def _month_period(year=2026, month=8):
+def _month_period(year=CUR_YEAR, month=CUR_MONTH):
     s, e = rg._month_bounds(year, month)
     return s, e
+
+
+def _current_month_period():
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return rg._month_bounds(now.year, now.month)
 
 
 # --- safe numeric helpers --------------------------------------------------
@@ -127,7 +142,7 @@ def test_build_report_alerts_emergency_first():
 def test_monthly_daily_energy_trend_present():
     f = _frame(n=288 * 2, power=200.0)  # 2 days
     data = ReportInput(pzem_count=1, frames={1: f})
-    start, end = rg._month_bounds(2026, 8)
+    start, end = rg._month_bounds(CUR_YEAR, CUR_MONTH)
     rep = build_report(data, start, end, "monthly")
     assert "daily_energy_trend" in rep["charts"]
     assert "peak_trend" in rep["charts"]
@@ -150,38 +165,38 @@ def test_event_summary_chart_when_events():
 
 def test_generate_monthly_creates_pdf(tmp_path):
     data = ReportInput(pzem_count=1, frames={1: _frame(n=288 * 3, power=200.0)})
-    res = rg.generate_monthly_report(data=data, year=2026, month=8, output_dir=str(tmp_path))
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
     assert os.path.exists(res["pdf"])
-    assert res["stub"] == "report-2026-08"
+    assert res["stub"] == f"report-{YM}"
     # no html output
     assert "html" not in res
 
 def test_monthly_pdf_valid_header(tmp_path):
     data = ReportInput(pzem_count=1, frames={1: _frame(power=200.0)})
-    res = rg.generate_monthly_report(data=data, year=2026, month=8, output_dir=str(tmp_path))
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
     with open(res["pdf"], "rb") as fh:
         assert fh.read(8) == b"%PDF-1.4"
 
 def test_monthly_latest_pdf_created(tmp_path):
     data = ReportInput(pzem_count=1, frames={1: _frame(power=200.0)})
-    res = rg.generate_monthly_report(data=data, year=2026, month=8, output_dir=str(tmp_path))
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
     out_dir = os.path.join(str(tmp_path), "monthly")
     assert os.path.exists(os.path.join(out_dir, "latest.pdf"))
     assert not os.path.exists(os.path.join(out_dir, "latest.html"))
 
 def test_monthly_pdf_contains_charts_and_text(tmp_path):
     data = ReportInput(pzem_count=1, frames={1: _frame(n=288 * 3, power=200.0)})
-    res = rg.generate_monthly_report(data=data, year=2026, month=8, output_dir=str(tmp_path))
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
     # PDF should embed vector chart operators when charts exist
     with open(res["pdf"], "rb") as fh:
         blob = fh.read()
-    assert b"Monthly Energy Report" in blob
+    assert b"MONTHLY ENERGY PERFORMANCE REPORT" in blob
     # chart path ops (rectangle fill 're f' or line stroke 'S') present
     assert b"re f" in blob or b" l S" in blob
 
 def test_monthly_contents_present(tmp_path):
     data = ReportInput(pzem_count=2, frames={1: _frame(power=200.0)})
-    res = rg.generate_monthly_report(data=data, year=2026, month=8, output_dir=str(tmp_path))
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
     rep = res["report"]
     assert rep["system"] is not None
     assert len(rep["pzem_rows"]) == 2
@@ -189,17 +204,21 @@ def test_monthly_contents_present(tmp_path):
 
 def test_missing_data_no_crash(tmp_path):
     res = rg.generate_monthly_report(data=ReportInput(pzem_count=1),
-                                     year=2026, month=8, output_dir=str(tmp_path))
+                                     year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
     assert os.path.getsize(res["pdf"]) > 0
     assert res["report"]["system"] is None
 
 
 # --- demo & determinism ----------------------------------------------------
 
-def test_demo_input_reproducible():
+def test_demo_input_reproducible(tmp_path):
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    month = now.month
+    year = now.year
     a = rg.demo_input(seed=7)
     b = rg.demo_input(seed=7)
-    s, e = rg._month_bounds(2026, 8)
+    s, e = rg._month_bounds(year, month)
     sa = rg._system_power(a.frames, s, e)
     sb = rg._system_power(b.frames, s, e)
     assert sa is not None and sb is not None
@@ -212,8 +231,8 @@ def test_demo_input_has_recommendations():
 def test_monthly_deterministic_bytes(tmp_path):
     d1 = tmp_path / "a"
     d2 = tmp_path / "b"
-    r1 = rg.generate_monthly_report(data=rg.demo_input(), year=2026, month=8, output_dir=str(d1))
-    r2 = rg.generate_monthly_report(data=rg.demo_input(), year=2026, month=8, output_dir=str(d2))
+    r1 = rg.generate_monthly_report(data=rg.demo_input(), year=CUR_YEAR, month=CUR_MONTH, output_dir=str(d1))
+    r2 = rg.generate_monthly_report(data=rg.demo_input(), year=CUR_YEAR, month=CUR_MONTH, output_dir=str(d2))
     with open(r1["pdf"], "rb") as f1, open(r2["pdf"], "rb") as f2:
         assert f1.read() == f2.read()
 
@@ -244,3 +263,158 @@ def test_dashboard_keeps_monthly_links():
         html = fh.read()
     assert "reports/monthly/latest.pdf" in html
     assert "Open Monthly PDF" in html or "Monthly PDF" in html
+
+
+# --- professional report redesign tests ---------------------------------
+
+def test_report_title_professional(tmp_path):
+    data = ReportInput(pzem_count=1, frames={1: _frame(power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"MONTHLY ENERGY PERFORMANCE REPORT" in blob
+
+def test_report_title_not_technical(tmp_path):
+    data = ReportInput(pzem_count=1, frames={1: _frame(power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Monthly Energy Report -" not in blob
+
+def test_executive_summary_present(tmp_path):
+    data = ReportInput(pzem_count=2, frames={1: _frame(power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    rep = res["report"]
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Executive Summary" in blob
+    assert b"Total Energy Used" in blob
+
+def test_readable_pzem_labels(tmp_path):
+    data = ReportInput(pzem_count=3, frames={1: _frame(power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"PZEM 1" in blob
+    assert b"PZEM 2" in blob
+    assert b"PZEM 3" in blob
+
+def test_power_converted_to_kw(tmp_path):
+    data = ReportInput(pzem_count=1, frames={1: _frame(n=288, power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    rep = res["report"]
+    sys = rep["system"]
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    if sys and sys['avg_power_w'] is not None:
+        kw = sys['avg_power_w'] / 1000.0
+        assert f"{kw:.2f}" in str(blob) or f"{kw:.2f} kW".encode() in blob
+
+def test_internal_recommendation_codes_hidden(tmp_path):
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    data = rg.demo_input()
+    res = rg.generate_monthly_report(data=data, year=now.year, month=now.month, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    # Codes should not appear in the main report (before Technical Details)
+    main_blob = blob.split(b"Technical Details / Appendix")[0]
+    assert b"RESPOND_PREDICTABLE_HIGH_LOAD" not in main_blob
+    assert b"SHIFT_NON_CRITICAL_LOAD" not in main_blob
+    assert b"REDUCE_IDLE_CONSUMPTION" not in main_blob
+
+def test_readable_recommendation_names_present(tmp_path):
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+    data = rg.demo_input()
+    res = rg.generate_monthly_report(data=data, year=now.year, month=now.month, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Predictable High-Usage Period" in blob
+
+def test_readable_alert_wording(tmp_path):
+    import datetime
+    from types import SimpleNamespace
+    now = datetime.datetime.now(datetime.timezone.utc)
+    s, e = rg._month_bounds(now.year, now.month)
+    faults = {5: [
+        {"pzem_number": 5, "timestamp": s + 100000, "fault_type": "OVER_VOLTAGE", "severity": "WARNING"},
+    ]}
+    data = rg.ReportInput(pzem_count=9, faults=faults, frames={5: _frame(n=288, power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Over-voltage condition detected" in blob
+    # Internal code should only appear in Technical Details appendix, not main report
+    main_blob = blob.split(b"Technical Details / Appendix")[0]
+    assert b"OVER_VOLTAGE" not in main_blob
+
+def test_maintenance_risk_section(tmp_path):
+    data = rg.demo_input()
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Maintenance Risk" in blob
+    assert b"High maintenance risk" in blob
+    assert b"Watch" in blob
+
+def test_forecast_unavailable_wording(tmp_path):
+    data = ReportInput(pzem_count=1, frames={1: _frame(power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Forecast unavailable" in blob or b"Forecast" in blob
+
+def test_energy_cost_section(tmp_path):
+    data = rg.demo_input()
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Energy Cost" in blob
+    assert b"Electricity rate" in blob
+
+def test_charts_still_generated(tmp_path):
+    data = ReportInput(pzem_count=2, frames={1: _frame(n=288*2, power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    rep = res["report"]
+    assert "charts" in rep
+    assert len(rep["charts"]) > 0
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Daily Energy Consumption" in blob
+
+def test_calculations_unchanged(tmp_path):
+    data = ReportInput(pzem_count=1, frames={1: _frame(n=288, power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    rep = res["report"]
+    assert rep["system"] is not None
+    assert rep["system"]["energy_kwh"] is not None
+
+def test_technical_details_appendix(tmp_path):
+    data = rg.demo_input()
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Technical Details / Appendix" in blob
+
+def test_no_data_fabrication(tmp_path):
+    data = ReportInput(pzem_count=1, frames={1: _frame(n=288, power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    rep = res["report"]
+    assert rep["active_pzem"] == 1
+    assert rep["total_pzem"] == 1
+    assert rep["system"] is not None
+
+def test_peak_demand_analysis_section(tmp_path):
+    data = rg.demo_input()
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Peak Demand Analysis" in blob
+
+def test_kwh_chart_title_unchanged(tmp_path):
+    data = ReportInput(pzem_count=1, frames={1: _frame(n=288*2, power=200.0)})
+    res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
+    with open(res["pdf"], "rb") as fh:
+        blob = fh.read()
+    assert b"Daily Energy Consumption" in blob

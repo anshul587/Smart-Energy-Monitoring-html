@@ -38,9 +38,13 @@ _cache: dict[str, tuple[float, Any]] = {}
 
 
 def _default_db_get(path: str) -> Any:
-    from .data_loader import _db_ref
+    from .data_loader import _db_ref, ConfigFileMissingError
 
-    return _db_ref(path).get()
+    try:
+        return _db_ref(path).get()
+    except Exception as exc:
+        logger.warning("Firebase read unavailable for path %s: %s", path, exc)
+        return {}
 
 
 def db_get(path: str) -> Any:
@@ -311,4 +315,32 @@ def build_summary() -> dict:
         "forecast_available": forecast_available,
         "latest_bill_prediction": latest_bill,
         "energy_saving": latest_saving,
+        "ai_status": build_ai_status_summary(),
     }
+
+
+def build_ai_status_summary():
+    """Build AI status summary for the dashboard.
+
+    Returns authoritative per-PZEM AI status distinguishing
+    AVAILABLE, NO_EVENT, INSUFFICIENT_DATA, NOT_RUN, ERROR.
+    """
+    try:
+        from ai.ai_status import read_all_ai_status
+        status_map = read_all_ai_status()
+        result = {}
+        for pzem, entry in sorted(status_map.items()):
+            result[f"pzem_{pzem}"] = {
+                "ai_status": entry.status.value,
+                "severity": entry.severity,
+                "anomaly_label": entry.anomaly_label,
+                "anomaly_score": entry.anomaly_score,
+                "fault_type": entry.fault_type,
+                "measured_value": entry.measured_value,
+                "reason": entry.reason,
+                "timestamp": entry.timestamp,
+                "model_status": entry.model_status,
+            }
+        return result
+    except Exception:
+        return None

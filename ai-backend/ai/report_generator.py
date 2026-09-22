@@ -103,6 +103,7 @@ class ReportInput:
     system_bill: Optional[dict] = None
     recommendations: List[Any] = field(default_factory=list)           # Stage 11 Recommendation
     rate: float = 0.0
+    ai_status: Dict[int, Any] = field(default_factory=dict)            # AI monitoring status per PZEM
 
 
 # ---------------------------------------------------------------------------
@@ -189,9 +190,9 @@ def _peak_in_period(peak: Any, start: int, end: int) -> Optional[dict]:
     if not (start <= ts <= end):
         return None
     return {
-        "peak_power_w": _safe(getattr(peak, "peak_power_w", None) or peak.get("peak_power_w"), 2),
-        "baseline_power_w": _safe(getattr(peak, "baseline_power_w", None) or peak.get("baseline_power_w"), 2),
-        "peak_above_baseline_w": _safe(getattr(peak, "peak_above_baseline_w", None) or peak.get("peak_above_baseline_w"), 2),
+        "peak_power_w": _safe(getattr(peak, "peak_power_w", None), 2),
+        "baseline_power_w": _safe(getattr(peak, "baseline_power_w", None), 2),
+        "peak_above_baseline_w": _safe(getattr(peak, "peak_above_baseline_w", None), 2),
         "peak_ts": ts,
     }
 
@@ -237,6 +238,49 @@ def _bill_summary(b: Optional[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Human-readable label mappings
+# ---------------------------------------------------------------------------
+
+RECOMMENDATION_LABELS = {
+    "RESPOND_PREDICTABLE_HIGH_LOAD": "Predictable High-Usage Period",
+    "SHIFT_NON_CRITICAL_LOAD": "Consider Shifting Non-Critical Loads",
+    "REDUCE_IDLE_CONSUMPTION": "Reduce Unnecessary Standby Consumption",
+    "IMPROVE_POWER_FACTOR": "Improve Power Factor",
+    "REDUCE_HIGH_POWER": "Investigate High-Power Operation",
+    "INVESTIGATE_HIGH_CURRENT": "Investigate Repeated High Current",
+    "REDUCE_PEAK_LOAD": "Reduce Repeated Peak-Load Usage",
+}
+
+FAULT_TYPE_LABELS = {
+    "OVER_VOLTAGE": "Over-voltage condition detected",
+    "UNDER_VOLTAGE": "Under-voltage condition detected",
+    "OVER_CURRENT": "Over-current condition detected",
+    "POWER_FACTOR_DROP": "Power-factor drop detected",
+    "FREQUENCY_DEVIATION": "Frequency deviation detected",
+    "HIGH_POWER": "Abnormally high power detected",
+    "COMMUNICATION_DEGRADED": "Communication degraded",
+}
+
+RISK_LABELS = {"HIGH": "High maintenance risk", "WATCH": "Watch", "LOW": "Low"}
+
+SEVERITY_LABELS = {"EMERGENCY": "Emergency", "WARNING": "Warning", "ANOMALY": "Anomaly"}
+
+PRIORITY_LABELS = {"HIGH": "High", "MEDIUM": "Medium", "LOW": "Low"}
+
+
+def _recommendation_label(rtype: str) -> str:
+    return RECOMMENDATION_LABELS.get(rtype, rtype)
+
+
+def _fault_type_label(ftype: str) -> str:
+    return FAULT_TYPE_LABELS.get(ftype, ftype)
+
+
+def _risk_label(risk: str) -> str:
+    return RISK_LABELS.get(risk, risk)
+
+
+# ---------------------------------------------------------------------------
 # Report builder
 # ---------------------------------------------------------------------------
 
@@ -252,6 +296,7 @@ def build_report(data: ReportInput, start_ts: int, end_ts: int, kind: str) -> di
             "avg_power_w": _safe(float(p.mean()), 2),
             "peak_power_w": _safe(float(p.max()), 2),
             "peak_ts": int(p.idxmax()),
+            "_baseline_power_w": _safe(float(p.median()), 2),
         }
 
     pzem_rows = []
@@ -346,6 +391,7 @@ def build_report(data: ReportInput, start_ts: int, end_ts: int, kind: str) -> di
         "total_pzem": data.pzem_count,
         "pzem_rows": pzem_rows,
         "ai_insights": ai,
+        "ai_status": data.ai_status,
         "alerts": alerts,
         "charts": _build_chart_data(data, start_ts, end_ts, kind),
     }
@@ -362,7 +408,11 @@ def _build_chart_data(data: ReportInput, start_ts: int, end_ts: int, kind: str) 
             charts["power_trend"] = {
                 "labels": [str(datetime.datetime.fromtimestamp(int(t), UTC).strftime("%H:%M")) for t in s.index],
                 "values": [float(v) for v in s.values],
-                "title": "System Power Trend (W)",
+                "title": "System Power Trend",
+                "x_label": "Time",
+                "y_label": "Power (kW)",
+                "unit": "kW",
+                "convert": lambda v: v / 1000.0,
             }
         else:
             # aggregate per calendar day
@@ -375,7 +425,11 @@ def _build_chart_data(data: ReportInput, start_ts: int, end_ts: int, kind: str) 
             charts["daily_energy_trend"] = {
                 "labels": list(day_energy.keys()),
                 "values": [round(v, 3) for v in day_energy.values()],
-                "title": "Daily Energy Trend (kWh)",
+                "title": "Daily Energy Consumption",
+                "x_label": "Date",
+                "y_label": "Energy (kWh)",
+                "unit": "kWh",
+                "convert": lambda v: v,
             }
             # peak trend per day
             day_peak = {}
@@ -384,8 +438,12 @@ def _build_chart_data(data: ReportInput, start_ts: int, end_ts: int, kind: str) 
                 day_peak[d] = max(day_peak.get(d, 0.0), float(v))
             charts["peak_trend"] = {
                 "labels": list(day_peak.keys()),
-                "values": [round(v, 2) for v in day_peak.values()],
-                "title": "Daily Peak Power (W)",
+                "values": [round(v / 1000.0, 2) for v in day_peak.values()],
+                "title": "Daily Peak Power",
+                "x_label": "Date",
+                "y_label": "Peak Power (kW)",
+                "unit": "kW",
+                "convert": lambda v: v / 1000.0,
             }
 
     # PZEM energy comparison (period)
@@ -399,19 +457,37 @@ def _build_chart_data(data: ReportInput, start_ts: int, end_ts: int, kind: str) 
         charts["pzem_energy"] = {
             "labels": [x[0] for x in pzem_energy],
             "values": [round(x[1], 3) for x in pzem_energy],
-            "title": "PZEM Energy Comparison (kWh)",
+            "title": "Energy Consumption by Meter",
+            "x_label": "Meter",
+            "y_label": "Energy (kWh)",
+            "unit": "kWh",
+            "convert": lambda v: v,
         }
 
-    # anomaly / fault summary
-    a_total = sum(len([a for a in (data.anomalies.get(n) or []) if _get_ts(a) and start_ts <= _get_ts(a) <= end_ts])
-                for n in range(1, data.pzem_count + 1))
-    f_total = sum(len([fl for fl in (data.faults.get(n) or []) if _get_ts(fl) and start_ts <= _get_ts(fl) <= end_ts])
-                 for n in range(1, data.pzem_count + 1))
+    # anomaly / fault summary per meter
+    pzem_a = {}
+    pzem_f = {}
+    for n in range(1, data.pzem_count + 1):
+        pzem_a[n] = len([a for a in (data.anomalies.get(n) or []) if _get_ts(a) and start_ts <= _get_ts(a) <= end_ts])
+        pzem_f[n] = len([fl for fl in (data.faults.get(n) or []) if _get_ts(fl) and start_ts <= _get_ts(fl) <= end_ts])
+    a_total = sum(pzem_a.values())
+    f_total = sum(pzem_f.values())
     if a_total or f_total:
+        # Only include meters with data
+        active = [n for n in range(1, data.pzem_count + 1) if pzem_a.get(n, 0) > 0 or pzem_f.get(n, 0) > 0]
+        if not active:
+            active = list(range(1, min(data.pzem_count + 1, 6)))
         charts["event_summary"] = {
-            "labels": ["Anomalies", "Faults"],
-            "values": [a_total, f_total],
-            "title": "Anomaly / Fault Count",
+            "labels": [f"PZEM {n}" for n in active],
+            "series": {
+                "Anomalies": [pzem_a[n] for n in active],
+                "Faults": [pzem_f[n] for n in active],
+            },
+            "title": "Anomalies and Faults by Meter",
+            "x_label": "Meter",
+            "y_label": "Count",
+            "unit": "count",
+            "convert": lambda v: v,
         }
     return charts
 
@@ -477,7 +553,6 @@ class _PDF:
         self.y -= h
 
     def table(self, headers: List[str], rows: List[List[str]], widths: List[int]):
-        # header
         self._space(14)
         self.y -= 11
         head = "  ".join(_PDF._s(h).ljust(w)[:w] for h, w in zip(headers, widths))
@@ -491,36 +566,154 @@ class _PDF:
             esc = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
             self.cur.append(f"BT /F1 9 Tf {self.M} {self.y:.1f} Td ({esc}) Tj ET")
 
-    def chart(self, title: str, labels, values, kind: str = "bar"):
-        n = len(values)
+    # ---- Advanced chart rendering ----
+
+    def chart(self, chart: dict):
+        """Render a chart dict with title, labels, values, and optional axis labels.
+        Supports bar and line kinds, single and multi-series."""
+        title = chart.get("title", "")
+        labels = chart.get("labels", [])
+        values = chart.get("values", [])
+        series = chart.get("series")
+        x_label = chart.get("x_label", "")
+        y_label = chart.get("y_label", "")
+        unit = chart.get("unit", "")
+        convert = chart.get("convert", lambda v: v)
+        kind = "line" if "trend" in title.lower() or "peak" in title.lower() else "bar"
+
+        # Determine if multi-series
+        is_multi = series is not None and len(series) > 0
+        if is_multi:
+            series_labels = list(series.keys())
+            series_data = list(series.values())
+            n = len(labels)
+        else:
+            series_labels = ["Value"]
+            series_data = [values]
+            n = len(values)
+
         if n == 0:
             return
-        self._space(140)
-        top = self.y
-        x0, y0 = self.M, top - 110
-        w, h = self.W - 2 * self.M, 100
-        t = _PDF._s(title).replace("(", r"\(").replace(")", r"\)")
-        self.cur.append(f"BT /F2 9 Tf {self.M} {top + 2:.1f} Td ({t}) Tj ET")
-        # axes
+
+        # Chart layout constants
+        page_w = self.W - 2 * self.M  # 512
+        page_h = 220  # chart height
+        top_margin = 28  # for title
+        bottom_margin = 40  # for x-axis labels
+        left_margin = 50  # for y-axis labels
+        right_margin = 10  # extra
+        left_label_w = 45  # y-axis label area
+        legend_h = 18  # legend height
+
+        chart_top = self.y - top_margin
+        chart_bottom = chart_top - page_h
+        x_axis_y = chart_bottom + 5
+        left_x = self.M + left_label_w
+        right_x = self.M + page_w - right_margin
+        chart_w = right_x - left_x
+        chart_h = chart_bottom - x_axis_y
+
+        self._space(top_margin + page_h + bottom_margin + 10)
+
+        # Draw title
+        t = _PDF._s(title)
+        self.cur.append(f"BT /F2 11 Tf {self.M} {chart_top + 2:.1f} Td ({t}) Tj ET")
+        self.y = chart_bottom - 8
+
+        # Draw axes
         self.cur.append("0 0 0 RG 0.5 w")
-        self.cur.append(f"{x0:.1f} {y0:.1f} m {x0:.1f} {y0 + h:.1f} l {x0 + w:.1f} {y0 + h:.1f} l S")
-        vmax = max(values) or 1.0
-        if kind == "bar":
-            bw = w / max(n, 1)
-            self.cur.append("0.14 0.38 0.92 rg")
-            for i, v in enumerate(values):
-                bh = h * (v / vmax)
-                x = x0 + i * bw + bw * 0.15
-                self.cur.append(f"{x:.1f} {y0:.1f} {bw * 0.7:.1f} {bh:.1f} re f")
+        # Y-axis
+        self.cur.append(f"{left_x:.1f} {x_axis_y:.1f} m {left_x:.1f} {chart_bottom:.1f} l S")
+        # X-axis
+        self.cur.append(f"{left_x:.1f} {x_axis_y:.1f} m {right_x:.1f} {x_axis_y:.1f} l S")
+        # Y-axis arrow
+        self.cur.append(f"{left_x:.1f} {chart_bottom:.1f} m {left_x-3:.1f} {chart_bottom-4:.1f} l S")
+        self.cur.append(f"{left_x:.1f} {chart_bottom:.1f} m {left_x+3:.1f} {chart_bottom-4:.1f} l S")
+        # X-axis arrow
+        self.cur.append(f"{right_x:.1f} {x_axis_y:.1f} m {right_x-4:.1f} {x_axis_y+3:.1f} l S")
+        self.cur.append(f"{right_x:.1f} {x_axis_y:.1f} m {right_x-4:.1f} {x_axis_y-3:.1f} l S")
+
+        # Y-axis tick marks and labels
+        n_ticks = 5
+        all_vals = []
+        for sdata in series_data:
+            all_vals.extend(sdata)
+        vmax = max(all_vals) if all_vals else 1.0
+        vmin = 0
+        if vmax <= 0:
+            vmax = 1.0
+        for i in range(n_ticks + 1):
+            frac = i / n_ticks
+            val = vmin + (vmax - vmin) * frac
+            y_pos = x_axis_y + chart_h * frac
+            # tick mark
+            self.cur.append(f"{left_x:.1f} {y_pos:.1f} m {left_x-3:.1f} {y_pos:.1f} l S")
+            # label
+            label_val = convert(val)
+            label_str = f"{label_val:.2f}"
+            escaped = _PDF._s(label_str)
+            self.cur.append(f"BT /F1 7 Tf {left_x - 8:.1f} {y_pos + 2:.1f} Td ({escaped}) Tj ET")
+
+        # Y-axis label
+        y_label_s = _PDF._s(y_label)
+        self.cur.append(f"BT /F1 8 Tf {self.M} {(chart_top + chart_bottom) / 2:.1f} Td ({y_label_s}) Tj ET")
+
+        # X-axis tick labels
+        tick_step = max(1, n // 8)  # limit number of labels
+        for i in range(n):
+            if i % tick_step != 0 and i != n - 1:
+                continue
+            x_pos = left_x + (i + 0.5) * chart_w / n
+            label_s = _PDF._s(str(labels[i])[:8])
+            self.cur.append(f"BT /F1 7 Tf {x_pos - 10:.1f} {x_axis_y + 10:.1f} Td ({label_s}) Tj ET")
+        # X-axis label
+        x_label_s = _PDF._s(x_label)
+        self.cur.append(f"BT /F1 8 Tf {self.M + page_w / 2 - 20:.1f} {x_axis_y + 20:.1f} Td ({x_label_s}) Tj ET")
+
+        # Draw data
+        colors = ["0.14 0.38 0.92", "0.92 0.38 0.14", "0.38 0.92 0.14", "0.92 0.14 0.38", "0.14 0.92 0.38"]
+        if is_multi:
+            # Grouped bar chart
+            n_series = len(series_data)
+            group_w = chart_w / n
+            bar_w = group_w / (n_series * 1.5)
+            for si, (sname, sdata) in enumerate(zip(series_labels, series_data)):
+                color = colors[si % len(colors)]
+                self.cur.append(f"{color} rg")
+                for i, v in enumerate(sdata):
+                    bh = chart_h * (v / vmax) if vmax > 0 else 0
+                    x = left_x + i * group_w + group_w * 0.1 + si * bar_w
+                    self.cur.append(f"{x:.1f} {x_axis_y:.1f} {bar_w:.1f} {bh:.1f} re f")
+                    # Value label
+                    if v > 0:
+                        val_str = _PDF._s(f"{v:.1f}")
+                        self.cur.append(f"BT /F1 6 Tf {x + bar_w/2:.1f} {x_axis_y + bh + 8:.1f} Td ({val_str}) Tj ET")
         else:
-            if n > 1:
-                xs = [x0 + w * i / (n - 1) for i in range(n)]
-                ys = [y0 + h * (v / vmax) for v in values]
-                self.cur.append("0.14 0.38 0.92 RG 1 w")
-                ops = f"{xs[0]:.1f} {ys[0]:.1f} m " + " ".join(
-                    f"{x:.1f} {y:.1f} l" for x, y in zip(xs[1:], ys[1:])) + " S"
-                self.cur.append(ops)
-        self.y = y0 - 8
+            # Single series
+            color = colors[0]
+            self.cur.append(f"{color} rg")
+            for i, v in enumerate(series_data[0]):
+                bh = chart_h * (convert(v) / vmax) if vmax > 0 else 0
+                x = left_x + (i + 0.5) * chart_w / n - (chart_w / n) * 0.35
+                bw = chart_w / n * 0.7
+                self.cur.append(f"{x:.1f} {x_axis_y:.1f} {bw:.1f} {bh:.1f} re f")
+                # Value label
+                val = convert(v)
+                if val > 0:
+                    val_str = _PDF._s(f"{val:.2f}")
+                    self.cur.append(f"BT /F1 6 Tf {x + bw/2:.1f} {x_axis_y + bh + 8:.1f} Td ({val_str}) Tj ET")
+
+        # Legend for multi-series
+        if is_multi:
+            leg_y = chart_bottom + 25
+            leg_x = right_x - 120
+            self.cur.append(f"BT /F1 8 Tf {leg_x:.1f} {leg_y:.1f} Td (Legend:) Tj ET")
+            for si, sname in enumerate(series_labels):
+                color = colors[si % len(colors)]
+                cx = leg_x + 45 + si * 60
+                self.cur.append(f"{color} rg")
+                self.cur.append(f"{cx:.1f} {leg_y + 2:.1f} m {cx + 6:.1f} {leg_y + 2:.1f} l {cx + 6:.1f} {leg_y - 4:.1f} l {cx:.1f} {leg_y - 4:.1f} l S")
+                self.cur.append(f"BT /F1 7 Tf {cx + 10:.1f} {leg_y - 2:.1f} Td ({_PDF._s(sname)}) Tj ET")
 
     def save(self, path: str):
         if self.cur:
@@ -562,69 +755,271 @@ class _PDF:
 
 
 def render_pdf(report: dict, path: str) -> None:
-    period = datetime.datetime.fromtimestamp(report["period_start"], UTC).strftime("%Y-%m")
+    period = datetime.datetime.fromtimestamp(report["period_start"], UTC).strftime("%B %Y")
     gen = datetime.datetime.fromtimestamp(report["generated_at"], UTC).strftime("%Y-%m-%d %H:%M UTC")
+    rate = report["rate"]
     pdf = _PDF()
-    pdf.heading(f"Monthly Energy Report - {period}", size=15)
-    pdf.text(f"Report period: {period}    Generated: {gen}    Rate: Rs {_fmt(report['rate'])}/kWh", size=9)
-    pdf.spacer(8)
-
-    pdf.heading("System Summary", size=12)
-    sys = report["system"]
-    if sys:
-        pdf.text(f"Total energy (ACTUAL): {_fmt(sys['energy_kwh'])} kWh", size=10)
-        pdf.text(f"Average power: {_fmt(sys['avg_power_w'])} W", size=10)
-        pdf.text(f"Peak power: {_fmt(sys['peak_power_w'])} W", size=10)
-        pdf.text(f"Peak timestamp: {datetime.datetime.fromtimestamp(sys['peak_ts'], UTC).strftime('%Y-%m-%d %H:%M')} UTC", size=10)
-        pdf.text(f"Active / available PZEM: {report['active_pzem']} / {report['total_pzem']}", size=10)
-    else:
-        pdf.text("No data available", size=10)
+    pdf.heading("MONTHLY ENERGY PERFORMANCE REPORT", size=18)
+    pdf.spacer(4)
+    pdf.text(f"Month: {period}", size=11, bold=True)
+    pdf.text(f"Report period: {datetime.datetime.fromtimestamp(report['period_start'], UTC).strftime('%d %B %Y')} – {datetime.datetime.fromtimestamp(report['period_end'] - 1, UTC).strftime('%d %B %Y')}", size=10)
+    pdf.text(f"Generated on: {gen}", size=10)
+    pdf.text(f"Electricity rate: \u20b9{_fmt(rate)} / kWh", size=10)
     pdf.spacer(6)
 
-    pdf.heading("PZEM Summary", size=12)
-    headers = ["PZEM", "kWh", "PeakW", "Anom", "Fault", "Risk", "Fcst", "Bill"]
-    widths = [8, 10, 8, 7, 7, 9, 10, 10]
+    sys = report["system"]
+    ai = report["ai_insights"]
+    charts = report["charts"]
+
+    # ---- Executive Summary ----
+    pdf.heading("Executive Summary", size=14)
+    if sys:
+        pdf.text(f"Total Energy Used: {_fmt(sys['energy_kwh'])} kWh", size=11, bold=True)
+        pdf.text(f"Average Power: {_fmt(sys['avg_power_w'] / 1000.0)} kW", size=10)
+        pdf.text(f"Peak Power: {_fmt(sys['peak_power_w'] / 1000.0)} kW", size=10)
+        pk_ts = sys['peak_ts']
+        pdf.text(f"Peak Time: {datetime.datetime.fromtimestamp(pk_ts, UTC).strftime('%d %B %Y, %H:%M')} UTC", size=10)
+    else:
+        pdf.text("Total Energy Used: No data", size=11)
+    pdf.text(f"Monitored Meters: {report['active_pzem']} / {report['total_pzem']}", size=10)
+    pdf.text(f"Alerts: {ai['anomaly_count'] + ai['fault_count']}  Anomalies: {ai['anomaly_count']}  Faults: {ai['fault_count']}", size=10)
+    risk_lines = []
+    for lvl, cnt in ai['risk_summary'].items():
+        risk_lines.append(f"{cnt} {_risk_label(lvl).lower()}")
+    pdf.text(f"High-Risk Meters: {ai['risk_summary'].get('HIGH', 0)}", size=10)
+    pdf.spacer(6)
+
+    # ---- What Happened This Month? ----
+    pdf.heading("What Happened This Month?", size=14)
+    if sys:
+        total_kwh = _fmt(sys['energy_kwh'])
+        peak_kw = _fmt(sys['peak_power_w'] / 1000.0)
+        anom = ai['anomaly_count']
+        fault = ai['fault_count']
+        high_risk = ai['risk_summary'].get('HIGH', 0)
+        watch_risk = ai['risk_summary'].get('WATCH', 0)
+        parts = [f"During {period}, the system consumed {total_kwh} kWh of electricity.",
+                 f"The highest recorded demand was {peak_kw} kW.",
+                 f"{anom} anomalies and {fault} faults were detected."]
+        if high_risk > 0 or watch_risk > 0:
+            risk_parts = []
+            if high_risk > 0:
+                risk_parts.append(f"{high_risk} meters classified as high maintenance risk")
+            if watch_risk > 0:
+                risk_parts.append(f"{watch_risk} meters classified as watch")
+            parts.append(f"{'Two meters' if len(risk_parts) == 2 else 'Meters'} were classified as {'high' if high_risk > 0 else 'watch'} maintenance risk: {' and '.join(risk_parts)}.")
+        narrative = " ".join(parts)
+        pdf.text(narrative, size=10)
+    else:
+        pdf.text("No system data was available for this report period.", size=10)
+    pdf.spacer(8)
+
+    # ---- System Performance ----
+    pdf.heading("System Performance", size=14)
+    headers = ["Metric", "Value", "Explanation"]
+    widths = [28, 20, 28]
+    rows = []
+    if sys:
+        rows.append(["Total Energy Used", f"{_fmt(sys['energy_kwh'])} kWh", "Total electrical energy consumed across all meters"])
+        rows.append(["Average Power", f"{_fmt(sys['avg_power_w'] / 1000.0)} kW", "Mean power draw over the reporting period"])
+        rows.append(["Peak Power", f"{_fmt(sys['peak_power_w'] / 1000.0)} kW", "Highest instantaneous power recorded"])
+        pk_ts = sys['peak_ts']
+        rows.append(["Peak Time", datetime.datetime.fromtimestamp(pk_ts, UTC).strftime('%d %B %Y, %H:%M UTC'), "Timestamp of the peak demand event"])
+    else:
+        rows.append(["Total Energy Used", "\u2014", "No data available"])
+        rows.append(["Average Power", "\u2014", "No data available"])
+        rows.append(["Peak Power", "\u2014", "No data available"])
+        rows.append(["Peak Time", "\u2014", "No data available"])
+    rows.append(["Active Meters", f"{report['active_pzem']} / {report['total_pzem']}", f"PZEM meters reporting data out of {report['total_pzem']} configured"])
+    pdf.table(headers, rows, widths)
+    pdf.spacer(8)
+
+    # ---- Meter-wise Energy Summary ----
+    pdf.heading("Meter-wise Energy Consumption", size=14)
+    headers = ["Meter", "Energy Used (kWh)", "Peak Power (kW)", "Anomalies", "Faults", "Maintenance Risk", "Forecast", "Bill Status"]
+    widths = [12, 18, 18, 12, 10, 18, 12, 12]
     rows = []
     for r in report["pzem_rows"]:
         if r["available"]:
-            rows.append([f"P{r['pzem']}", _fmt(r['energy_kwh']), _fmt(r['peak_power_w']),
-                         str(r['anomalies']), f"{r['faults']}", str(r['risk_level'] or '-'),
+            peak_kw = _fmt(r['peak_power_w'] / 1000.0) if r['peak_power_w'] is not None else "\u2014"
+            risk = _risk_label(r['risk_level']) if r['risk_level'] else "\u2014"
+            rows.append([f"PZEM {r['pzem']}", _fmt(r['energy_kwh']), peak_kw,
+                         str(r['anomalies']), str(r['faults']), risk,
                          str(r['forecast']['status']), str(r['bill']['status'])])
         else:
-            rows.append([f"P{r['pzem']}", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"])
+            rows.append([f"PZEM {r['pzem']}", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"])
     pdf.table(headers, rows, widths)
-    pdf.spacer(6)
+    pdf.spacer(8)
 
-    ai = report["ai_insights"]
-    pdf.heading("AI Insights", size=12)
-    pdf.text(f"Anomalies: {ai['anomaly_count']}  Faults: {ai['fault_count']}  Emergencies: {ai['emergency_count']}", size=10)
-    pdf.text(f"Maintenance risk: {', '.join(f'{k}:{v}' for k,v in ai['risk_summary'].items()) or '—'}", size=10)
-    pdf.text(f"System forecast: {ai['forecast']['status'] if ai['forecast'] else 'No data'}", size=10)
-    pdf.text(f"System bill: {ai['system_bill']['status'] if ai['system_bill'] else 'No data'}", size=10)
-    for r in ai["recommendations"]:
-        who = "SYSTEM" if r["pzem_number"] is None else f"PZEM {r['pzem_number']}"
-        line = f"[{r['priority']}] {who} {r['recommendation_type']}: {r['reason']}"
-        if r["potential_saving_kwh"] is not None:
-            line += f" (est {_fmt(r['potential_saving_kwh'])} kWh)"
-        pdf.text(line, size=9, indent=6)
-    pdf.spacer(6)
+    # ---- Peak Demand Analysis ----
+    # System peak MUST come from sys_stats (simultaneous aligned PZEM samples)
+    # NOT from ai['peaks'] which are per-PZEM individual maxima
+    pdf.heading("Peak Demand Analysis", size=14)
+    if sys:
+        pdf.text(f"Maximum system power: {_fmt(sys['peak_power_w'] / 1000.0)} kW", size=10)
+        pk_ts = sys['peak_ts']
+        pdf.text(f"Peak date: {datetime.datetime.fromtimestamp(pk_ts, UTC).strftime('%d %B %Y')}", size=10)
+        pdf.text(f"Peak time: {datetime.datetime.fromtimestamp(pk_ts, UTC).strftime('%H:%M')} UTC", size=10)
+        # Baseline is the median of the aligned system power series
+        # This comes from sys_stats computation in build_report
+        baseline_w = None
+        if sys.get("_baseline_power_w") is not None:
+            baseline_w = sys["_baseline_power_w"]
+        above_baseline = (sys['peak_power_w'] - baseline_w) if baseline_w else None
+        pdf.text(f"Peak above baseline: {_fmt(above_baseline / 1000.0) if above_baseline is not None else '\u2014'} kW", size=10)
+        pdf.text(f"Baseline (median) power: {_fmt(baseline_w / 1000.0) if baseline_w else '\u2014'} kW", size=10)
+    else:
+        pdf.text("No peak demand data available for this period.", size=10)
+    pdf.text("System peak is computed from timestamp-aligned simultaneous PZEM readings (Stage 3.1 aggregation).", size=9)
+    pdf.spacer(8)
 
-    pdf.heading("Alert Summary", size=12)
+    # ---- Alerts & Abnormal Events ----
+    pdf.heading("Alerts & Abnormal Events", size=14)
+    pdf.text(f"Summary: {ai['anomaly_count']} anomalies, {ai['fault_count']} faults, {ai['emergency_count']} emergencies", size=10)
+    pdf.spacer(4)
     if report["alerts"]:
         for a in report["alerts"]:
-            t = datetime.datetime.fromtimestamp(a["timestamp"], UTC).strftime("%Y-%m-%d %H:%M") if a["timestamp"] else "—"
-            pdf.text(f"{a['severity']} PZEM {a['pzem']} ({a['type']}) @ {t} UTC", size=9, indent=6)
+            ft = _fault_type_label(a.get('type', '') or '')
+            sev = SEVERITY_LABELS.get(a.get('severity', ''), a.get('severity', ''))
+            t = datetime.datetime.fromtimestamp(a["timestamp"], UTC).strftime('%d %B %Y') if a["timestamp"] else "\u2014"
+            who = f"PZEM {a['pzem']}" if a['pzem'] else "SYSTEM"
+            pdf.text(f"{who} \u2013 {ft}", size=10, bold=True)
+            pdf.text(f"Date: {t}", size=9, indent=6)
+            pdf.text(f"Status: {sev}", size=9, indent=6)
     else:
-        pdf.text("No emergency or warning alerts in this period.", size=10)
-    pdf.spacer(6)
+        pdf.text("No anomalies or faults were detected in this period.", size=10)
+    pdf.spacer(8)
 
-    if report["charts"]:
-        pdf.heading("Visual Summary", size=12)
-        for c in report["charts"].values():
+    # ---- Maintenance Risk ----
+    pdf.heading("Maintenance Risk", size=14)
+    risk_summary = ai['risk_summary']
+    if risk_summary:
+        for lvl in ["HIGH", "WATCH", "LOW"]:
+            cnt = risk_summary.get(lvl, 0)
+            if cnt > 0:
+                pdf.text(f"- {cnt} meters: {_risk_label(lvl)}", size=10)
+        high_meters = [r['pzem'] for r in report["pzem_rows"] if r.get("risk_level") == "HIGH"]
+        watch_meters = [r['pzem'] for r in report["pzem_rows"] if r.get("risk_level") == "WATCH"]
+        if high_meters:
+            pdf.text(f"High-risk meters: {', '.join(f'PZEM {m}' for m in high_meters)}", size=9, indent=6)
+        if watch_meters:
+            pdf.text(f"Watch meters: {', '.join(f'PZEM {m}' for m in watch_meters)}", size=9, indent=6)
+    else:
+        pdf.text("No maintenance risk data available for this period.", size=10)
+    pdf.spacer(8)
+
+    # ---- Energy-Saving Recommendations ----
+    pdf.heading("Energy-Saving Recommendations", size=14)
+    if ai['recommendations']:
+        for r in ai['recommendations']:
+            label = _recommendation_label(r['recommendation_type'])
+            who = "SYSTEM" if r['pzem_number'] is None else f"PZEM {r['pzem_number']}"
+            pdf.text(f"{who} \u2013 {label}", size=11, bold=True)
+            pdf.text(f"Priority: {PRIORITY_LABELS.get(r['priority'], r['priority'])}", size=9, indent=6)
+            pdf.text(f"Observation: {r['reason']}", size=9, indent=6)
+            if r['potential_saving_kwh'] is not None:
+                pdf.text(f"Estimated saving: {_fmt(r['potential_saving_kwh'])} kWh", size=9, indent=6)
+            if r['potential_cost_saving'] is not None and rate > 0:
+                pdf.text(f"Estimated cost impact: \u20b9{_fmt(r['potential_cost_saving'])}", size=9, indent=6)
+            pdf.spacer(2)
+    else:
+        pdf.text("No energy-saving recommendations available for this period.", size=10)
+    pdf.spacer(8)
+
+    # ---- Energy Cost ----
+    # Bill must use same semantics as dashboard: actual_energy × rate
+    # estimated_total_energy includes forecast; actual_energy is what's consumed
+    pdf.heading("Energy Cost", size=14)
+    pdf.text(f"Electricity rate: \u20b9{_fmt(rate)} / kWh", size=10)
+    if sys and sys['energy_kwh'] is not None:
+        pdf.text(f"Energy consumed (actual): {_fmt(sys['energy_kwh'])} kWh", size=10)
+        actual_bill = sys['energy_kwh'] * rate if rate > 0 else None
+        pdf.text(f"Estimated cost (actual): \u20b9{_fmt(actual_bill)}", size=10)
+    if ai['system_bill'] and ai['system_bill']['estimated_bill'] is not None:
+        sb = ai['system_bill']
+        pdf.text(f"Estimated total energy (actual + forecast): {_fmt(sb['estimated_total_energy_kwh'])} kWh", size=10)
+        pdf.text(f"Forecast energy: {_fmt(sb.get('forecast_energy_kwh', 0))} kWh", size=10)
+        pdf.text(f"Estimated bill (total): \u20b9{_fmt(sb['estimated_bill'])}", size=10)
+        pdf.text(f"Bill status: {sb.get('status', 'UNKNOWN')}", size=10)
+        if sb.get('reason'):
+            pdf.text(f"Bill reason: {sb['reason']}", size=9)
+    else:
+        pdf.text("Bill prediction: Not available for this period.", size=10)
+    pdf.spacer(8)
+
+    # ---- Energy Forecast ----
+    pdf.heading("Energy Forecast", size=14)
+    if ai['forecast']:
+        fc = ai['forecast']
+        if fc.get('status') == 'FORECAST':
+            pdf.text(f"Forecast status: {fc['status']}", size=10)
+            pdf.text(f"Confidence: {fc.get('confidence', '\u2014')}", size=10)
+            if fc.get('forecast_energy_kwh') is not None:
+                pdf.text(f"Forecast energy: {_fmt(fc['forecast_energy_kwh'])} kWh", size=10)
+        else:
+            pdf.text("Forecast unavailable", size=10)
+            pdf.text("Insufficient forecast data was available for the system during this report period.", size=9)
+    else:
+        pdf.text("Forecast unavailable", size=10)
+        pdf.text("Insufficient forecast data was available for the system during this report period.", size=9)
+    pdf.spacer(8)
+
+    # ---- Charts ----
+    if charts:
+        pdf.heading("Charts", size=14)
+        for c in charts.values():
+            pdf.chart(c)
+            # Interpretation text
             title = c.get("title", "")
-            kind = "line" if ("trend" in title.lower() or "power" in title.lower()
-                             or "peak" in title.lower()) else "bar"
-            pdf.chart(title, c.get("labels", []), c.get("values", []), kind=kind)
+            labels = c.get("labels", [])
+            values = c.get("values", [])
+            series = c.get("series")
+            unit = c.get("unit", "")
+            if "energy" in title.lower() and values:
+                max_val = max(values)
+                max_idx = values.index(max_val)
+                pdf.text(f"Highest daily energy consumption: {_fmt(max_val)} {unit} on {labels[max_idx]}.", size=9)
+            elif "peak" in title.lower() and values:
+                max_val = max(values)
+                max_idx = values.index(max_val)
+                pdf.text(f"Highest daily peak: {_fmt(max_val)} {unit} on {labels[max_idx]}.", size=9)
+            elif "by meter" in title.lower() and values:
+                sorted_items = sorted(zip(labels, values), key=lambda x: -x[1])
+                top2 = sorted_items[:2]
+                pdf.text("Higher energy consumption was recorded by:", size=9)
+                for meter, val in top2:
+                    pdf.text(f"  {meter} - {_fmt(val)} {unit}", size=9, indent=6)
+            elif "event" in title.lower() and series:
+                for sname, sdata in series.items():
+                    for i, v in enumerate(sdata):
+                        if v > 0:
+                            pdf.text(f"{labels[i]}: {sname} = {v}", size=9)
+            pdf.spacer(4)
+            # Key values table
+            if "by meter" in title.lower() and values and len(values) > 0:
+                sorted_items = sorted(zip(labels, values), key=lambda x: -x[1])[:5]
+                pdf.text("Top Energy Consumers:", size=9, bold=True)
+                pdf.table(["Meter", "Energy"],
+                          [[m, f"{_fmt(v)} {unit}"] for m, v in sorted_items],
+                          [14, 14])
+            elif "peak" in title.lower() and values and len(values) > 0:
+                max_val = max(values)
+                max_idx = values.index(max_val)
+                pdf.text(f"Key value: {labels[max_idx]} = {_fmt(max_val)} {unit}", size=9)
+            pdf.spacer(4)
+    pdf.spacer(8)
+
+    # ---- Technical Details / Appendix ----
+    pdf.heading("Technical Details / Appendix", size=14)
+    pdf.text("Internal recommendation codes (traceability):", size=9)
+    for r in ai['recommendations']:
+        code = r['recommendation_type']
+        who = "SYSTEM" if r['pzem_number'] is None else f"PZEM {r['pzem_number']}"
+        pdf.text(f"  {code} - {who} - {PRIORITY_LABELS.get(r['priority'], r['priority'])}", size=8, indent=6)
+    pdf.text("Fault types (internal codes):", size=9)
+    for a in report["alerts"]:
+        pdf.text(f"  {a.get('type', '\u2014')} - PZEM {a['pzem']} - {a.get('severity', '\u2014')}", size=8, indent=6)
+    pdf.text("Report generated by Smart Energy Monitoring System.", size=8)
     pdf.save(path)
 
 
@@ -730,10 +1125,23 @@ def build_report_input_from_pipelines(settings=None) -> ReportInput:
         for n in preprocess_results}
     recs = energy_saving.generate_recommendations(meters, rate=rate)
 
+    # Stage 16: AI status for report
+    ai_status: Dict[int, Any] = {}
+    try:
+        from ai.ai_status import compute_all_ai_status
+        ai_status = compute_all_ai_status(
+            anomaly_results=anomaly_results or {},
+            fault_results_map=faults or {},
+            last_pipeline_run=None,
+        )
+    except Exception:
+        pass
+
     return ReportInput(
         pzem_count=settings.pzem_count, frames=frames, anomalies=anomalies,
         faults=faults, peaks=peaks, risks=risks, forecasts=fc_per,
         bills=bills, system_bill=system_bill, recommendations=recs, rate=rate,
+        ai_status=ai_status,
     )
 
 

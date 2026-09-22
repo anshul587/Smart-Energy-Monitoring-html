@@ -397,3 +397,23 @@ def test_api_priority_top_level_filtering(client):
     r = client.get("/api/v1/diagnostic-recommendations?priority=P1 - Critical")
     data = r.get_json()["data"]
     assert all(rec["priority"] == "P1 - Critical" for rec in data)
+
+
+# ---- Regression: Firebase init failure returns empty data, not 500 ----
+
+def test_default_db_get_returns_empty_on_firebase_failure(monkeypatch):
+    """_default_db_get returns {} instead of raising when Firebase is
+    unavailable (e.g., service account JSON not yet written during deploy).
+    This prevents 500 errors on production endpoints."""
+    from ai import api_store
+    fake_settings = types.SimpleNamespace(pzem_count=9)
+    monkeypatch.setattr("ai.api_store.get_settings", lambda: fake_settings)
+    monkeypatch.setattr("ai.api_server.get_settings", lambda: fake_settings)
+    # Simulate Firebase init failure in _db_ref
+    def failing_db_ref(path):
+        raise RuntimeError("Service account file not found")
+    monkeypatch.setattr("ai.data_loader._db_ref", failing_db_ref)
+    api_store.clear_cache()
+    # _default_db_get should return {} instead of raising
+    result = api_store._default_db_get("ai/diagnostic_recommendations/pzem_1")
+    assert result == {}

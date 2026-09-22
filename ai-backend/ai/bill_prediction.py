@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from typing import Optional
 
 from .config import Settings, get_settings
@@ -49,6 +50,18 @@ WATT_SECONDS_PER_KWH = 3_600_000.0
 _SLOT_ENERGY_FACTOR = HISTORY_SLOT_SECONDS / WATT_SECONDS_PER_KWH
 
 SOURCE_STAGE = "stage10/bill_prediction"
+
+
+def _get_bill_rate() -> float:
+    """Return the electricity rate per kWh from the environment.
+
+    Reads BILL_RATE_PER_KWH from os.environ (loaded from .env via
+    load_dotenv). Falls back to 0.0 if not configured.
+    """
+    try:
+        return float(os.environ.get("BILL_RATE_PER_KWH", "0.0") or "0.0")
+    except (TypeError, ValueError):
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +105,7 @@ def forecast_energy_kwh(horizon_payload: Optional[dict]) -> float:
 def predict_bill(
     actual_energy_kwh,
     forecast_horizon_payload: Optional[dict],
-    rate: float = 0.0,
+    rate: Optional[float] = None,
     billing_period: str = "30d",
     forecast_confidence: Optional[str] = None,
 ) -> dict:
@@ -102,6 +115,8 @@ def predict_bill(
     energy/bill fields are None (never fabricated). On OK every numeric
     field is finite and non-negative.
     """
+    if rate is None:
+        rate = _get_bill_rate()
     # --- actual energy (must be finite & non-negative) ---
     try:
         actual = float(actual_energy_kwh)
@@ -157,11 +172,13 @@ def predict_bill_from_record(
     actual_energy_kwh,
     forecast_record,
     horizon: str = "forecast_24h",
-    rate: float = 0.0,
+    rate: Optional[float] = None,
     billing_period: str = "30d",
 ) -> dict:
     """Convenience wrapper that pulls the horizon payload + anchor + confidence
     out of either a Stage 9 ForecastResult or a persisted forecast dict."""
+    if rate is None:
+        rate = _get_bill_rate()
     if forecast_record is None:
         return _insufficient("power forecast unavailable")
 
@@ -292,9 +309,12 @@ def _init_firebase():
             f"Service account file not found at {cred_path}. Never commit this file."
         )
     cred = credentials.Certificate(str(cred_path))
-    _firebase_app = firebase_admin.initialize_app(
-        cred, {"databaseURL": settings.firebase_database_url}
-    )
+    try:
+        _firebase_app = firebase_admin.initialize_app(
+            cred, {"databaseURL": settings.firebase_database_url}
+        )
+    except ValueError:
+        _firebase_app = firebase_admin.get_app()
     logger.info("Firebase Admin SDK initialized against %s", settings.firebase_database_url)
     return _firebase_app
 
@@ -341,7 +361,7 @@ def run_stage_10_pipeline(
     actual_energy_kwh=None,
     forecast_system_record=None,
     horizon: str = "forecast_24h",
-    rate: float = 0.0,
+    rate: Optional[float] = None,
     billing_period: str = "30d",
     settings: Optional[Settings] = None,
 ) -> dict:
@@ -353,6 +373,8 @@ def run_stage_10_pipeline(
     omitted they are derived from the existing Stage 1/2/9 pipelines (no new
     data-loading path is created).
     """
+    if rate is None:
+        rate = _get_bill_rate()
     settings = settings or get_settings()
 
     if actual_energy_kwh is None:

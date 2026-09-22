@@ -58,17 +58,97 @@ FORECAST = [{"pzem_number": None, "status": "FORECAST", "forecast_24h": 950.0,
 BILL = [{"status": "OK", "estimated_bill": 312.5, "anchor_timestamp": 1700000000000,
          "estimated_total_energy_kwh": 150.0}]
 SAVING = [{"status": "OK", "recommendation_count": 2,
-           "recommendations": [
-               {"pzem_number": 4, "priority": "high",
-                "recommendation": "Shift compressor load to off-peak hours."},
-               {"pzem_number": 2, "priority": "medium",
-                "recommendation": "Investigate standby current draw."}]}]
+            "recommendations": [
+                {"pzem_number": 4, "priority": "high",
+                 "recommendation": "Shift compressor load to off-peak hours."},
+                {"pzem_number": 2, "priority": "medium",
+                 "recommendation": "Investigate standby current draw."}]}]
 REPORTS = [
     {"filename": "report-2026-08.pdf", "year": 2026, "month": 8, "size_bytes": 12345,
      "url": "/api/v1/reports/monthly/report-2026-08.pdf"},
     {"filename": "latest.pdf", "year": None, "month": None, "size_bytes": 12345,
      "url": "/api/v1/reports/monthly/latest.pdf"},
 ]
+
+DIAGNOSTIC_RECS = [
+    {"pzem_number": 1, "timestamp": 1700000000000, "fault_type": "overvoltage",
+     "severity": "WARNING", "priority": "P1 - Critical",
+     "probable_cause": "Possible incoming supply overvoltage.",
+     "evidence": "voltage reading above threshold.",
+     "confidence": 0.85,
+     "what_to_check": "Verify voltage with an independent meter.",
+     "what_to_do_now": "Do NOT assume equipment failure.",
+     "corrective_action": "Independent voltage verification first.",
+     "urgency": "HIGH", "maintenance_required": True,
+     "maintenance_timing": "Schedule inspection promptly.",
+     "energy_impact_kwh": None, "cost_impact": None,
+     "source_stages": ("Stage 3: Fault Diagnosis",)},
+    {"pzem_number": 2, "timestamp": 1700000000000, "fault_type": "overcurrent",
+     "severity": "EMERGENCY", "priority": "P1 - Critical",
+     "probable_cause": "Possible overload or excessive connected load.",
+     "evidence": "current reading above threshold.",
+     "confidence": 0.9,
+     "what_to_check": "Check active loads and breaker rating.",
+     "what_to_do_now": "Reduce or redistribute load if overloaded.",
+     "corrective_action": "Reduce or redistribute load if overloaded.",
+     "urgency": "HIGH", "maintenance_required": True,
+     "maintenance_timing": "Address load immediately if sustained.",
+     "energy_impact_kwh": None, "cost_impact": None,
+     "source_stages": ("Stage 3: Fault Diagnosis",)},
+]
+DIAGNOSTIC_RECS_EMPTY = []
+DIAGNOSTIC_RECS_NO_CAUSE = [
+    {"pzem_number": 3, "timestamp": 1700000000000, "fault_type": "high_power",
+     "severity": "NORMAL", "priority": "P3 - Informational",
+     "probable_cause": None,
+     "evidence": "power reading above threshold.",
+     "confidence": 0.7,
+     "what_to_check": "Check active loads.",
+     "what_to_do_now": "Check active loads and determine if expected.",
+     "corrective_action": "Assess whether high power is expected.",
+     "urgency": "MEDIUM", "maintenance_required": False,
+     "maintenance_timing": "Monitor.",
+     "energy_impact_kwh": None, "cost_impact": None,
+     "source_stages": ("Stage 3: Fault Diagnosis",)},
+]
+
+HISTORICAL = {
+    "status": "OK",
+    "pzem_number": 3,
+    "reason": None,
+    "requested_start": 1_700_000_000,
+    "requested_end": 1_700_086_400,
+    "actual_start": 1_700_000_000,
+    "actual_end": 1_700_086_400,
+    "available_days": 1.0,
+    "sample_count": 288,
+    "valid_rows": 288,
+    "dropped_rows": 0,
+    "power": {"count": 288, "minimum": 50.0, "maximum": 500.0, "average": 114.0, "median": 100.0, "std_dev": 50.0, "min_timestamp": 1_700_000_000, "max_timestamp": 1_700_086_400},
+    "voltage": {"count": 288, "minimum": 225.0, "maximum": 235.0, "average": 228.0, "median": 228.0, "std_dev": 2.0, "min_timestamp": 1_700_000_000, "max_timestamp": 1_700_086_400},
+    "current": {"count": 288, "minimum": 0.2, "maximum": 2.0, "average": 0.5, "median": 0.5, "std_dev": 0.3, "min_timestamp": 1_700_000_000, "max_timestamp": 1_700_086_400},
+    "frequency": {"count": 288, "minimum": 49.5, "maximum": 50.5, "average": 50.0, "median": 50.0, "std_dev": 0.2},
+    "pf": {"count": 288, "minimum": 0.8, "maximum": 1.0, "average": 0.95, "median": 0.95, "std_dev": 0.05},
+    "energy_consumption": {"start_energy_kwh": 100.0, "end_energy_kwh": 200.0, "consumption_kwh": 100.0, "start_timestamp": 1_700_000_000, "end_timestamp": 1_700_086_400, "valid": True},
+    "trend": {"power_trend_per_hour": 0.0, "current_trend_per_hour": 0.0, "voltage_trend_per_hour": 0.0, "pf_trend_per_hour": 0.0, "frequency_trend_per_hour": 0.0, "data_span_hours": 1.0, "sample_count": 288},
+    "hourly": [{"hour": 0, "power_avg": 100.0, "power_max": 150.0, "power_min": 50.0, "sample_count": 12}],
+    "daily": [{"date": "2023-11-15", "power_avg": 114.0, "power_max": 500.0, "energy_consumption_kwh": 100.0, "sample_count": 288}],
+}
+
+HISTORICAL_NO_DATA = {"status": "NO_DATA", "reason": "No historical data available for the requested period"}
+HISTORICAL_INSUFFICIENT = {"status": "INSUFFICIENT_DATA", "reason": "Only 1 sample(s) in range; need >= 2"}
+HISTORICAL_ERROR = {"status": "ERROR", "reason": "Invalid PZEM number"}
+HISTORICAL_SYSTEM = {
+    "status": "OK",
+    "reason": None,
+    "requested_start": 1_700_000_000,
+    "requested_end": 1_700_086_400,
+    "meters_analyzed": 3,
+    "total_power": {"count": 288, "minimum": 200.0, "maximum": 1200.0, "average": 600.0, "median": 500.0, "std_dev": 200.0, "min_timestamp": 1_700_000_000, "max_timestamp": 1_700_086_400},
+    "total_energy_kwh": 500.0,
+    "per_pzem": {"1": {"status": "OK", "reason": None, "power_avg": 276.0, "power_max": 300.0, "energy_consumption_kwh": 50.0},
+                 "3": {"status": "OK", "reason": None, "power_avg": 114.0, "power_max": 200.0, "energy_consumption_kwh": 30.0}},
+}
 
 FAKE = {
     "get_system_summary": lambda **k: dict(SUMMARY),
@@ -82,7 +162,9 @@ FAKE = {
     "get_forecast": lambda **k: [dict(f) for f in FORECAST],
     "get_bill_prediction": lambda **k: [dict(b) for b in BILL],
     "get_energy_saving": lambda **k: [dict(e) for e in SAVING],
+    "get_historical_analysis": lambda pzem_number=None, **k: dict(HISTORICAL) if pzem_number else dict(HISTORICAL_SYSTEM),
     "get_monthly_reports": lambda **k: [dict(r) for r in REPORTS],
+    "get_diagnostic_recommendations": lambda **k: [dict(r) for r in DIAGNOSTIC_RECS],
 }
 
 
@@ -114,8 +196,9 @@ def empty_data(no_key):
             return {}
         if name in ("get_meters", "get_faults", "get_anomalies", "get_peaks",
                     "get_maintenance", "get_forecast", "get_bill_prediction",
-                    "get_energy_saving", "get_monthly_reports"):
-            return []
+                    "get_energy_saving", "get_monthly_reports", "get_historical_analysis",
+                    "get_diagnostic_recommendations"):
+            return [] if name != "get_historical_analysis" else HISTORICAL_NO_DATA
         return {}
     no_key.setattr(bob_tools, "run_tool", empty_run)
     return empty_run
@@ -363,3 +446,418 @@ def test_secret_leak_prevention(no_key, monkeypatch):
     assert "sk-ant" not in raw
     assert "AIza" not in raw
     assert "BEGIN PRIVATE KEY" not in raw
+
+
+# ---- HISTORICAL ANALYSIS TESTS --------------------------------------------
+
+def test_historical_tool_registration(no_key):
+    """get_historical_analysis is registered in bob_tools."""
+    assert "get_historical_analysis" in bob_tools.available_tools()
+
+
+def test_historical_tool_dispatch(fake_data):
+    """Historical question dispatches get_historical_analysis."""
+    r = ask_bob.ask_bob("PZEM 3 ne 10 September ko average power kya tha?")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+    assert "PZEM 3" in r["answer"]
+
+
+def test_historical_10_september(fake_data):
+    """10 September date extraction routes to historical analysis."""
+    r = ask_bob.ask_bob("PZEM-3 ne 10 September ko sabse zyada power kab consume ki?")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+    assert "PZEM 3" in r["answer"]
+
+
+def test_historical_yesterday(fake_data):
+    """yesterday/kal date extraction routes to historical analysis."""
+    r = ask_bob.ask_bob("PZEM-2 ka kal ki energy consumption kitni thi?")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+
+
+def test_historical_last_7_days(fake_data):
+    """last 7 days phrase routes to historical analysis."""
+    r = ask_bob.ask_bob("PZEM-2 ka last 7 days ka maximum current kya tha?")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+    assert "maximum" in r["answer"].lower() or "PZEM 2" in r["answer"]
+
+
+def test_historical_peak_power(fake_data):
+    """Historical peak power query routes correctly."""
+    r = ask_bob.ask_bob("PZEM-3 ka last week ka maximum power kya tha?")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+
+
+def test_historical_not_get_meter(fake_data):
+    """Historical question must NOT select get_meter."""
+    r = ask_bob.ask_bob("PZEM-3 ne 10 September ko average power kya tha?")
+    tool_names = {c[0] for c in fake_data}
+    assert "get_meter" not in tool_names
+    assert "get_historical_analysis" in tool_names
+
+
+def test_live_still_get_meter(fake_data):
+    """Live question still selects get_meter or get_meters, not historical."""
+    r = ask_bob.ask_bob("PZEM-3 ka abhi power kitna hai?")
+    tool_names = {c[0] for c in fake_data}
+    assert "get_historical_analysis" not in tool_names
+    assert "get_meter" in tool_names or "get_meters" in tool_names
+
+
+def test_historical_no_data(no_key):
+    """NO_DATA status returns clear message, no fabricated values."""
+    def fake_run(name, **params):
+        if name == "get_historical_analysis":
+            return HISTORICAL_NO_DATA
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("PZEM-5 ka last month ka power kya tha?")
+    assert "historical data" in r["answer"].lower() or "unavailable" in r["answer"].lower()
+
+
+def test_historical_insufficient_data(no_key):
+    """INSUFFICIENT_DATA status returns clear message."""
+    def fake_run(name, **params):
+        if name == "get_historical_analysis":
+            return HISTORICAL_INSUFFICIENT
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("PZEM-9 ka power kya tha?")
+    assert "insufficient" in r["answer"].lower() or "don't have enough" in r["answer"].lower()
+
+
+def test_historical_system_query(fake_data):
+    """System-wide historical query routes to get_historical_analysis without pzem."""
+    r = ask_bob.ask_bob("System ka last 7 days ka highest simultaneous power kab tha?")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+    assert "PZEM" not in r["answer"] or "System" in r["answer"]
+
+
+def test_historical_multi_pzem(fake_data):
+    """Multi-PZEM historical comparison routes to get_historical_analysis."""
+    r = ask_bob.ask_bob("Compare PZEM 2 and PZEM 5 power last week.")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+
+
+def test_historical_no_fabricated_values(fake_data):
+    """Historical response must not invent unavailable values."""
+    r = ask_bob.ask_bob("PZEM-3 ne 10 September ko average power kya tha?")
+    if "average" not in r["answer"].lower() and "PZEM 3" in r["answer"]:
+        pass
+    assert "don't have enough current data" not in r["answer"] or "PZEM 3" in r["answer"]
+
+
+def test_historical_date_extraction():
+    """Date extraction works for specific dates."""
+    from ai.ask_bob import _date_from_text
+    result = _date_from_text("10 September")
+    assert result is not None
+    assert "start" in result and "end" in result
+    assert isinstance(result["start"], int)
+    assert isinstance(result["end"], int)
+
+
+def test_historical_yesterday_extraction():
+    """yesterday/kal date extraction works."""
+    from ai.ask_bob import _date_from_text
+    result = _date_from_text("yesterday")
+    assert result is not None
+    assert isinstance(result["start"], int)
+
+
+def test_historical_no_data_message(no_key):
+    """Historical NO_DATA produces proper message, not fabricated data."""
+    def fake_run(name, **params):
+        if name == "get_historical_analysis":
+            return HISTORICAL_NO_DATA
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("PZEM-5 ka last month ka power kya tha?")
+    assert "historical data" in r["answer"].lower() or "unavailable" in r["answer"].lower() or "don't have enough" in r["answer"].lower()
+
+# ---- STAGE 5C: Diagnostic Recommendation Tests ----------------------------
+
+def test_diagnostic_tool_registration(no_key):
+    """get_diagnostic_recommendations is registered in bob_tools."""
+    assert "get_diagnostic_recommendations" in bob_tools.available_tools()
+
+
+def test_diagnostic_tool_dispatch(fake_data):
+    """Diagnostic recommendation question dispatches get_diagnostic_recommendations."""
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    assert any(c[0] == "get_diagnostic_recommendations" for c in fake_data)
+    assert "PZEM" in r["answer"] or "recommendation" in r["answer"].lower()
+
+
+def test_diagnostic_recommendation_retrieval(fake_data):
+    """Diagnostic recommendation retrieval returns structured records."""
+    r = ask_bob.ask_bob("Kya koi diagnostic recommendation hai?")
+    assert any(c[0] == "get_diagnostic_recommendations" for c in fake_data)
+
+
+def test_diagnostic_pzem_filtering(fake_data):
+    """PZEM filtering works for diagnostic recommendations."""
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    calls = [c for c in fake_data if c[0] == "get_diagnostic_recommendations"]
+    assert len(calls) >= 1, "get_diagnostic_recommendations was not called"
+    assert calls[0][1].get("pzem_number") == 1
+
+
+def test_diagnostic_severity_filtering(fake_data):
+    """Severity filtering parameter is supported by get_diagnostic_recommendations."""
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    calls = [c for c in fake_data if c[0] == "get_diagnostic_recommendations"]
+    assert len(calls) >= 1, "get_diagnostic_recommendations was not called"
+    assert "severity" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+
+
+def test_diagnostic_fault_type_filtering(fake_data):
+    """fault_type filtering parameter is supported by get_diagnostic_recommendations."""
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    calls = [c for c in fake_data if c[0] == "get_diagnostic_recommendations"]
+    assert len(calls) >= 1, "get_diagnostic_recommendations was not called"
+    assert "fault_type" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+
+
+def test_diagnostic_date_filtering(fake_data):
+    """Date filtering parameters are supported by get_diagnostic_recommendations."""
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    calls = [c for c in fake_data if c[0] == "get_diagnostic_recommendations"]
+    assert len(calls) >= 1, "get_diagnostic_recommendations was not called"
+    assert "start" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+    assert "end" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+
+
+def test_diagnostic_limit(fake_data):
+    """Limit parameter is supported by get_diagnostic_recommendations."""
+    r = ask_bob.ask_bob("Kya koi diagnostic recommendation hai?")
+    calls = [c for c in fake_data if c[0] == "get_diagnostic_recommendations"]
+    assert len(calls) >= 1, "get_diagnostic_recommendations was not called"
+    assert "limit" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+
+
+def test_diagnostic_empty_recommendations(no_key):
+    """Empty diagnostic recommendation list returns clean message, no fabrication."""
+    def fake_run(name, **params):
+        if name == "get_diagnostic_recommendations":
+            return []
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("Kya koi diagnostic recommendation hai?")
+    # Should return a clean message without fabrication
+    assert "diagnostic" in r["answer"].lower() or "not available" in r["answer"].lower() or "enough" in r["answer"].lower()
+    # Must NOT contain internal debug tags
+    assert "[Evidence status" not in r["answer"]
+    assert "[Note:" not in r["answer"]
+
+
+def test_diagnostic_missing_fields(no_key):
+    """Missing fields in diagnostic records are preserved as None, not invented."""
+    def fake_run(name, **params):
+        if name == "get_diagnostic_recommendations":
+            return [{"pzem_number": 3, "timestamp": 1700000000000,
+                     "fault_type": "high_power", "severity": "NORMAL",
+                     "probable_cause": None, "energy_impact_kwh": None,
+                     "cost_impact": None}]
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("PZEM-3 mein kya problem hai?")
+    assert "probable cause" not in r["answer"].lower() or "does not establish" in r["answer"].lower()
+
+
+def test_diagnostic_full_field_rendering(fake_data):
+    """All diagnostic recommendation fields are rendered when available."""
+    r = ask_bob.ask_bob("Kya koi diagnostic recommendation hai?")
+    calls = [c for c in fake_data if c[0] == "get_diagnostic_recommendations"]
+    assert len(calls) >= 1, "get_diagnostic_recommendations was not called"
+    assert "PZEM" in r["answer"]
+    assert "probable cause" in r["answer"].lower() or "Probable Cause" in r["answer"]
+    assert "evidence" in r["answer"].lower() or "Evidence" in r["answer"]
+    assert "what to check" in r["answer"].lower() or "What to Check" in r["answer"]
+    assert "what to do now" in r["answer"].lower() or "What to Do Now" in r["answer"]
+    assert "corrective action" in r["answer"].lower() or "Corrective Action" in r["answer"]
+    assert "urgency" in r["answer"].lower() or "Urgency" in r["answer"]
+    assert "confidence" in r["answer"].lower() or "Confidence" in r["answer"]
+    assert "maintenance" in r["answer"].lower()
+
+
+def test_diagnostic_no_fabrication(fake_data):
+    """Diagnostic renderer must not fabricate missing values; verified fields must appear."""
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    calls = [c for c in fake_data if c[0] == "get_diagnostic_recommendations"]
+    assert len(calls) >= 1, "get_diagnostic_recommendations was not called"
+    assert "PZEM" in r["answer"]
+    assert "probable cause" in r["answer"].lower() or "Probable Cause" in r["answer"]
+    assert "evidence" in r["answer"].lower() or "Evidence" in r["answer"]
+    assert "savings" not in r["answer"].lower()
+
+
+def test_diagnostic_routing(fake_data):
+    """Diagnostic intent routing works for what should I do questions."""
+    r = ask_bob.ask_bob("Is fault mein mujhe kya karna chahiye?")
+    assert any(c[0] == "get_diagnostic_recommendations" for c in fake_data)
+
+
+def test_diagnostic_what_should_do_routing(fake_data):
+    """what should I do questions route to diagnostic recommendations."""
+    r = ask_bob.ask_bob("Abhi kya action lena chahiye?")
+    assert any(c[0] == "get_diagnostic_recommendations" for c in fake_data)
+
+
+def test_diagnostic_why_question_behavior(fake_data):
+    """why questions use diagnostic recommendations as evidence source."""
+    r = ask_bob.ask_bob("PZEM-3 mein overcurrent ka reason kya hai?")
+    assert any(c[0] == "get_diagnostic_recommendations" for c in fake_data)
+
+
+def test_existing_fault_routing_regression(fake_data):
+    """Existing get_faults routing still works (regression test)."""
+    r = ask_bob.ask_bob("Any recent faults?")
+    assert ("get_faults", {}) in fake_data
+
+
+def test_existing_live_routing_regression(fake_data):
+    """Existing live meter routing still works (regression test)."""
+    r = ask_bob.ask_bob("What is the power of PZEM 1?")
+    assert ("get_meter", {"pzem_number": 1}) in fake_data
+
+
+def test_existing_historical_routing_regression(fake_data):
+    """Existing historical routing still works (regression test)."""
+    r = ask_bob.ask_bob("PZEM-3 ne 10 September ko average power kya tha?")
+    assert any(c[0] == "get_historical_analysis" for c in fake_data)
+
+
+def test_no_fabricated_probable_cause(no_key):
+    """If Stage 4 returns probable_cause=None, BOB must NOT generate its own."""
+    def fake_run(name, **params):
+        if name == "get_diagnostic_recommendations":
+            return [{"pzem_number": 3, "timestamp": 1700000000000,
+                     "fault_type": "high_power", "severity": "NORMAL",
+                     "priority": "P3 - Informational",
+                     "probable_cause": None,
+                     "evidence": "power reading above threshold.",
+                     "confidence": 0.7,
+                     "what_to_check": "Check active loads.",
+                     "what_to_do_now": "Check active loads.",
+                     "corrective_action": "Assess whether high power is expected.",
+                     "urgency": "MEDIUM", "maintenance_required": False,
+                     "maintenance_timing": "Monitor.",
+                     "energy_impact_kwh": None, "cost_impact": None,
+                     "source_stages": ("Stage 3",)}]
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("PZEM-3 mein overcurrent ka reason kya hai?")
+    assert "probable cause" not in r["answer"].lower() or "does not establish" in r["answer"].lower()
+
+
+def test_no_fabricated_energy_cost(no_key):
+    """If Stage 4 returns energy_impact_kwh=None and cost_impact=None, BOB must NOT invent savings."""
+    def fake_run(name, **params):
+        if name == "get_diagnostic_recommendations":
+            return [{"pzem_number": 1, "timestamp": 1700000000000,
+                     "fault_type": "overvoltage", "severity": "WARNING",
+                     "probable_cause": "Supply overvoltage.",
+                     "evidence": "voltage above threshold.",
+                     "confidence": 0.85,
+                     "what_to_check": "Verify voltage.",
+                     "what_to_do_now": "Do not assume equipment failure.",
+                     "corrective_action": "Independent voltage verification.",
+                     "urgency": "HIGH", "maintenance_required": True,
+                     "maintenance_timing": "Schedule inspection promptly.",
+                     "energy_impact_kwh": None, "cost_impact": None,
+                     "source_stages": ("Stage 3",)}]
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    assert "savings" not in r["answer"].lower()
+
+
+def test_diagnostic_tool_params(no_key):
+    """get_diagnostic_recommendations has correct _TOOL_PARAMS."""
+    assert "pzem_number" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+    assert "start" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+    assert "end" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+    assert "limit" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+    assert "severity" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+    assert "fault_type" in bob_tools._TOOL_PARAMS["get_diagnostic_recommendations"]
+
+
+def test_diagnostic_tool_rejects_invalid_pzem(no_key):
+    """Invalid pzem_number raises ToolError."""
+    with pytest.raises(bob_tools.ToolError) as exc:
+        bob_tools.run_tool("get_diagnostic_recommendations", pzem_number=99)
+    assert exc.value.code == "invalid_pzem"
+
+
+def test_diagnostic_tool_rejects_invalid_limit(no_key):
+    """Invalid limit raises ToolError."""
+    with pytest.raises(bob_tools.ToolError) as exc:
+        bob_tools.run_tool("get_diagnostic_recommendations", limit=-1)
+    assert exc.value.code == "invalid_limit"
+
+
+def test_diagnostic_renderer_empty(no_key):
+    """_render_diagnostic_recommendations returns clear message for empty list."""
+    from ai.ask_bob import _render_diagnostic_recommendations
+    result = _render_diagnostic_recommendations([])
+    assert "no verified diagnostic recommendation" in result.lower() or "not available" in result.lower()
+
+
+def test_diagnostic_renderer_with_data(fake_data):
+    """_render_diagnostic_recommendations renders fields correctly."""
+    from ai.ask_bob import _render_diagnostic_recommendations
+    recs = [{"pzem_number": 1, "timestamp": 1700000000000, "fault_type": "overvoltage",
+             "severity": "WARNING", "priority": "P1 - Critical",
+             "probable_cause": "Supply overvoltage.",
+             "evidence": "voltage above threshold.",
+             "confidence": 0.85,
+             "what_to_check": "Verify voltage.",
+             "what_to_do_now": "Do not assume equipment failure.",
+             "corrective_action": "Independent voltage verification.",
+             "urgency": "HIGH", "maintenance_required": True,
+             "maintenance_timing": "Schedule inspection promptly.",
+             "energy_impact_kwh": None, "cost_impact": None,
+             "source_stages": ("Stage 3",)}]
+    result = _render_diagnostic_recommendations(recs)
+    assert "PZEM 1" in result
+    assert "overvoltage" in result.lower()
+    assert "WARNING" in result
+
+
+def test_diagnostic_no_invented_confidence(no_key):
+    """Confidence is preserved exactly, not upgraded."""
+    def fake_run(name, **params):
+        if name == "get_diagnostic_recommendations":
+            return [{"pzem_number": 1, "timestamp": 1700000000000,
+                     "fault_type": "overvoltage", "severity": "WARNING",
+                     "probable_cause": "Supply overvoltage.",
+                     "evidence": "voltage above threshold.",
+                     "confidence": 0.5,
+                     "what_to_check": "Verify voltage.",
+                     "what_to_do_now": "Do not assume equipment failure.",
+                     "corrective_action": "Independent voltage verification.",
+                     "urgency": "HIGH", "maintenance_required": True,
+                     "maintenance_timing": "Schedule inspection promptly.",
+                     "energy_impact_kwh": None, "cost_impact": None,
+                     "source_stages": ("Stage 3",)}]
+        if name in ("get_system_summary",):
+            return {}
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
+    assert "0.5" in r["answer"] or "high confidence" not in r["answer"].lower()

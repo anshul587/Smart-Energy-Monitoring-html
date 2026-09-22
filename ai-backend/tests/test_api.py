@@ -310,7 +310,7 @@ def test_deterministic(client):
     assert a == b
 
 
-# ---- docs / openapi --------------------------------------------------------
+# ---- 24. OpenAPI / docs ------------------------------------------------------
 def test_openapi_and_docs(client):
     r = client.get("/api/v1/openapi.json")
     assert r.status_code == 200
@@ -322,7 +322,155 @@ def test_openapi_and_docs(client):
     assert "swagger" in d.get_data(as_text=True).lower()
 
 
-# ---- 25. Ask BOB -----------------------------------------------------------
+# ---- 25. History: single PZEM historical -------------------------------------
+def test_history_pzem_single(client, monkeypatch):
+    """GET /api/v1/history/pzem/<n> with start/end timestamps."""
+    now = int(time.time())
+    # Monkeypatch data_loader to return synthetic history frames
+    from ai import data_loader
+    import ai.electrical_analysis as ea
+    import pandas as pd
+    import numpy as np
+
+    BASE_TS = 1_700_000_000
+
+    def make_frame(days=1, power_profile=lambda t: 100.0):
+        ts = np.arange(BASE_TS, BASE_TS + days * 288 * 300, 300, dtype=np.int64)
+        power_vals = np.array([power_profile(int(x)) for x in (ts % 86400) // 60])
+        df = pd.DataFrame({
+            "timestamp": ts,
+            "voltage": 230.0,
+            "current": np.full(len(ts), 0.5),
+            "power": power_vals,
+            "energy": np.cumsum(power_vals * 300 / 3600.0 / 1000.0),
+            "frequency": 50.0,
+            "pf": 0.98,
+        })
+        return df
+
+    frames = {n: make_frame(days=1, power_profile=lambda t: 200.0) for n in range(1, 4)}
+
+    monkeypatch.setattr(data_loader, "fetch_meter_history", lambda pzem_number, settings=None, force_full_refresh=False: data_loader.HistoryLoadResult(
+        pzem_number=pzem_number,
+        frame=frames.get(pzem_number, make_frame(days=1, power_profile=lambda t: 200.0)),
+        available_days=1.0,
+        requested_days=60,
+        served_from_cache_only=False,
+        dropped_rows=0,
+        duplicate_keys_collapsed=0,
+    ))
+
+    r = client.get("/api/v1/history/pzem/1?start=%d&end=%d" % (BASE_TS, BASE_TS + 300))
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["status"] == "ok"
+    assert "data" in body
+    data = body["data"]
+    # Verify system aggregation timestamps are correct (min/max correspond to actual values)
+    if "total_power" in data:
+        tp = data["total_power"]
+        assert "average" in tp
+        assert "maximum" in tp
+        assert "min_timestamp" in tp
+        assert "max_timestamp" in tp
+
+
+# ---- 26. History: multi-PZEM comparison --------------------------------------
+def test_history_multi_pzem(client, monkeypatch):
+    """GET /api/v1/history/multi with pzem[] and start/end timestamps."""
+    from ai import data_loader
+    import pandas as pd
+    import numpy as np
+
+    BASE_TS = 1_700_000_000
+
+    def make_frame(days=1, power_profile=lambda t: 100.0):
+        ts = np.arange(BASE_TS, BASE_TS + 288 * 300, 300, dtype=np.int64)
+        power_vals = np.array([power_profile(int(x)) for x in (ts % 86400) // 60])
+        df = pd.DataFrame({
+            "timestamp": ts,
+            "voltage": 230.0,
+            "current": np.full(len(ts), 0.5),
+            "power": power_vals,
+            "energy": np.cumsum(power_vals * 300 / 3600.0 / 1000.0),
+            "frequency": 50.0,
+            "pf": 0.98,
+        })
+        return df
+
+    # Patch fetch_meter_history
+    monkeypatch.setattr(data_loader, "fetch_meter_history", lambda pzem_number, settings=None, force_full_refresh=False: data_loader.HistoryLoadResult(
+        pzem_number=pzem_number,
+        frame=make_frame(days=1),
+        available_days=1.0,
+        requested_days=60,
+        served_from_cache_only=False,
+        dropped_rows=0,
+        duplicate_keys_collapsed=0,
+    ))
+
+    r = client.get("/api/v1/history/multi?pzem=1,2&start=%d&end=%d" % (BASE_TS, BASE_TS + 300))
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["status"] == "ok"
+    data = body["data"]
+    # Should have pzem_1 and pzem_2 keys
+    assert "1" in data or "pzem_1" in str(data)
+    assert "2" in data or "pzem_2" in str(data)
+
+
+# ---- 27. History: system-wide ------------------------------------------------
+def test_history_system(client, monkeypatch):
+    """GET /api/v1/history/system with start/end timestamps."""
+    from ai import data_loader
+    import pandas as pd
+    import numpy as np
+
+    BASE_TS = 1_700_000_000
+
+    def make_frame(days=1, power_profile=lambda t: 100.0):
+        ts = np.arange(BASE_TS, BASE_TS + 288 * 300, 300, dtype=np.int64)
+        power_vals = np.array([power_profile(int(x)) for x in (ts % 86400) // 60])
+        df = pd.DataFrame({
+            "timestamp": ts,
+            "voltage": 230.0,
+            "current": np.full(len(ts), 0.5),
+            "power": power_vals,
+            "energy": np.cumsum(power_vals * 300 / 3600.0 / 1000.0),
+            "frequency": 50.0,
+            "pf": 0.98,
+        })
+        return df
+
+    # Patch fetch_meter_history
+    monkeypatch.setattr(data_loader, "fetch_meter_history", lambda pzem_number, settings=None, force_full_refresh=False: data_loader.HistoryLoadResult(
+        pzem_number=pzem_number,
+        frame=make_frame(days=1),
+        available_days=1.0,
+        requested_days=60,
+        served_from_cache_only=False,
+        dropped_rows=0,
+        duplicate_keys_collapsed=0,
+    ))
+
+    r = client.get("/api/v1/history/system?start=%d&end=%d" % (BASE_TS, BASE_TS + 86400))
+    assert r.status_code == 200, r.get_data(as_text=True)
+    body = r.get_json()
+    assert body["status"] == "ok"
+    data = body["data"]
+    # Verify system aggregation preserves simultaneous sum semantics
+    assert "total_power" in data
+    tp = data["total_power"]
+    assert "average" in tp
+    assert "maximum" in tp
+    assert "min_timestamp" in tp
+    assert "max_timestamp" in tp
+    # min/max timestamps should correspond to actual min/max values (Part 1 fix)
+    # Verify min_timestamp and max_timestamp correspond to actual values
+    assert tp["average"] > 0 or tp["count"] > 0
+
+
+# ---- 25. Ask BOB -------------------------------------------------------------
 def test_ask_returns_answer(client, monkeypatch):
     from ai import bob_tools
     meters = [

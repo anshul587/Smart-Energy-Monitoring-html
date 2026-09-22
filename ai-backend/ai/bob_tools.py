@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 
 from . import api_store
 from .config import get_settings
+from . import electrical_analysis as ea
 
 logger = logging.getLogger("ai.bob_tools")
 
@@ -104,6 +105,38 @@ def _check_str(name: str, value: Any) -> Optional[str]:
     if not re.fullmatch(r"[A-Za-z0-9 _\-]+", s):
         raise ToolError(f"invalid_{name}", f"{name} contains disallowed characters")
     return s
+
+
+# ---------------------------------------------------------------------------
+# Date parsing helpers
+# ---------------------------------------------------------------------------
+
+def _date_to_ts(date_str: Optional[str]) -> Optional[int]:
+    """Parse a date/relative string to UTC midnight timestamp (seconds)."""
+    if date_str is None:
+        return None
+    from datetime import datetime, timezone, timedelta
+    q = date_str.strip().lower()
+    if q in ("yesterday", "kal", "aaj", "today"):
+        if q in ("kal", "aaj", "today"):
+            d = datetime.now(timezone.utc).date()
+        else:
+            d = datetime.now(timezone.utc).date() - timedelta(days=1)
+        return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp())
+    try:
+        import dateutil.parser
+        dt = dateutil.parser.parse(date_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return int(dt.timestamp())
+    except Exception:
+        return None
+
+
+def _ts_to_date(ts: int) -> str:
+    """Convert timestamp to YYYY-MM-DD string."""
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d")
 
 
 # ---------------------------------------------------------------------------
@@ -239,8 +272,185 @@ def get_energy_saving(pzem_number=None, priority=None, start=None, end=None, lim
     pz = None if pzem_number is None else _check_pzem(pzem_number)
     lim = _check_limit(limit)
     recs = _filter(api_store.read_energy_saving(), pz, _check_ts(start), _check_ts(end), None,
-                   "severity", None, _check_str("priority", priority))
+                    "severity", None, _check_str("priority", priority))
     return recs[:lim]
+
+
+def get_diagnostic_recommendations(
+    pzem_number=None,
+    start=None,
+    end=None,
+    limit=None,
+    severity=None,
+    fault_type=None,
+) -> list:
+    pz = None if pzem_number is None else _check_pzem(pzem_number)
+    lim = _check_limit(limit)
+    recs = _filter(api_store.read_diagnostic_recommendations(), pz, _check_ts(start), _check_ts(end),
+                    _check_str("severity", severity), "severity", None, None)
+    if fault_type is not None:
+        ft = _check_str("fault_type", fault_type)
+        recs = [r for r in recs if str(r.get("fault_type", "")).lower() == ft.lower()]
+    return recs[:lim]
+
+
+def get_historical_analysis(
+    pzem_number=None,
+    start=None,
+    end=None,
+    analysis_type="stats",
+) -> dict:
+    """Access Stage 3 historical electrical analysis.
+
+    Returns a dict with explicit status and verified data.
+    Never fabricates values.
+    """
+    lim = _check_limit(None)  # use default limit for records
+    s = _check_ts(start)
+    e = _check_ts(end)
+
+    try:
+        if pzem_number is not None:
+            pz = _check_pzem(pzem_number)
+            result = ea.analyze_pzem_history(pz, start=s, end=e)
+            return {
+                "status": result.status,
+                "pzem_number": result.pzem_number,
+                "reason": result.reason,
+                "requested_start": result.requested_start,
+                "requested_end": result.requested_end,
+                "actual_start": result.actual_start,
+                "actual_end": result.actual_end,
+                "available_days": result.available_days,
+                "sample_count": result.sample_count,
+                "valid_rows": result.valid_rows,
+                "dropped_rows": result.dropped_rows,
+                "power": {
+                    "count": result.power.count,
+                    "minimum": result.power.minimum,
+                    "maximum": result.power.maximum,
+                    "average": result.power.average,
+                    "median": result.power.median,
+                    "std_dev": result.power.std_dev,
+                    "min_timestamp": result.power.min_timestamp,
+                    "max_timestamp": result.power.max_timestamp,
+                } if result.power.count > 0 else None,
+                "voltage": {
+                    "count": result.voltage.count,
+                    "minimum": result.voltage.minimum,
+                    "maximum": result.voltage.maximum,
+                    "average": result.voltage.average,
+                    "median": result.voltage.median,
+                    "std_dev": result.voltage.std_dev,
+                    "min_timestamp": result.voltage.min_timestamp,
+                    "max_timestamp": result.voltage.max_timestamp,
+                } if result.voltage.count > 0 else None,
+                "current": {
+                    "count": result.current.count,
+                    "minimum": result.current.minimum,
+                    "maximum": result.current.maximum,
+                    "average": result.current.average,
+                    "median": result.current.median,
+                    "std_dev": result.current.std_dev,
+                    "min_timestamp": result.current.min_timestamp,
+                    "max_timestamp": result.current.max_timestamp,
+                } if result.current.count > 0 else None,
+                "frequency": {
+                    "count": result.frequency.count,
+                    "minimum": result.frequency.minimum,
+                    "maximum": result.frequency.maximum,
+                    "average": result.frequency.average,
+                    "median": result.frequency.median,
+                    "std_dev": result.frequency.std_dev,
+                } if result.frequency.count > 0 else None,
+                "pf": {
+                    "count": result.pf.count,
+                    "minimum": result.pf.minimum,
+                    "maximum": result.pf.maximum,
+                    "average": result.pf.average,
+                    "median": result.pf.median,
+                    "std_dev": result.pf.std_dev,
+                } if result.pf.count > 0 else None,
+                "energy_consumption": {
+                    "start_energy_kwh": result.energy_consumption.start_energy_kwh,
+                    "end_energy_kwh": result.energy_consumption.end_energy_kwh,
+                    "consumption_kwh": result.energy_consumption.consumption_kwh,
+                    "start_timestamp": result.energy_consumption.start_timestamp,
+                    "end_timestamp": result.energy_consumption.end_timestamp,
+                    "valid": result.energy_consumption.valid,
+                } if result.energy_consumption.valid else None,
+                "trend": {
+                    "power_trend_per_hour": result.trend.power_trend_per_hour,
+                    "current_trend_per_hour": result.trend.current_trend_per_hour,
+                    "voltage_trend_per_hour": result.trend.voltage_trend_per_hour,
+                    "pf_trend_per_hour": result.trend.pf_trend_per_hour,
+                    "frequency_trend_per_hour": result.trend.frequency_trend_per_hour,
+                    "data_span_hours": result.trend.data_span_hours,
+                    "sample_count": result.trend.sample_count,
+                },
+                "hourly": [
+                    {
+                        "hour": h.hour,
+                        "power_avg": h.power.average if h.power.count > 0 else None,
+                        "power_max": h.power.maximum if h.power.count > 0 else None,
+                        "power_min": h.power.minimum if h.power.count > 0 else None,
+                        "sample_count": h.sample_count,
+                    }
+                    for h in result.hourly
+                ],
+                "daily": [
+                    {
+                        "date": d.date,
+                        "power_avg": d.power.average if d.power.count > 0 else None,
+                        "power_max": d.power.maximum if d.power.count > 0 else None,
+                        "energy_consumption_kwh": d.energy_consumption.consumption_kwh if d.energy_consumption.valid else None,
+                        "sample_count": d.sample_count,
+                    }
+                    for d in result.daily
+                ],
+            }
+
+        # System-wide analysis
+        if pzem_number is None and start is not None:
+            result = ea.analyze_system_history(start=s, end=e)
+        elif pzem_number is None:
+            result = ea.analyze_system_history()
+        else:
+            result = ea.analyze_system_history(start=s, end=e)
+
+        return {
+            "status": result.status,
+            "reason": result.reason,
+            "requested_start": result.requested_start,
+            "requested_end": result.requested_end,
+            "meters_analyzed": result.meters_analyzed,
+            "total_power": {
+                "count": result.total_power.count,
+                "minimum": result.total_power.minimum,
+                "maximum": result.total_power.maximum,
+                "average": result.total_power.average,
+                "median": result.total_power.median,
+                "std_dev": result.total_power.std_dev,
+                "min_timestamp": result.total_power.min_timestamp,
+                "max_timestamp": result.total_power.max_timestamp,
+            } if result.total_power.count > 0 else None,
+            "total_energy_kwh": result.total_energy_kwh,
+            "per_pzem": {
+                str(n): {
+                    "status": r.status,
+                    "reason": r.reason,
+                    "power_avg": r.power.average if r.power.count > 0 else None,
+                    "power_max": r.power.maximum if r.power.count > 0 else None,
+                    "energy_consumption_kwh": r.energy_consumption.consumption_kwh if r.energy_consumption.valid else None,
+                }
+                for n, r in result.per_pzem.items()
+            },
+        }
+    except ValueError as exc:
+        return {"status": "ERROR", "reason": str(exc)}
+    except Exception as exc:
+        logger.warning("Historical analysis failed: %s", exc)
+        return {"status": "ERROR", "reason": str(exc)}
 
 
 # --- Monthly reports: local disk only (same source the API serves) -----------
@@ -298,7 +508,9 @@ _TOOL_FUNCS: dict[str, Callable] = {
     "get_forecast": get_forecast,
     "get_bill_prediction": get_bill_prediction,
     "get_energy_saving": get_energy_saving,
+    "get_historical_analysis": get_historical_analysis,
     "get_monthly_reports": get_monthly_reports,
+    "get_diagnostic_recommendations": get_diagnostic_recommendations,
 }
 
 # Accepted parameters per tool (used for safe auto-binding + param filtering).
@@ -313,7 +525,9 @@ _TOOL_PARAMS: dict[str, tuple] = {
     "get_forecast": ("pzem_number", "horizon", "start", "end", "limit"),
     "get_bill_prediction": ("limit",),
     "get_energy_saving": ("pzem_number", "priority", "start", "end", "limit"),
+    "get_historical_analysis": ("pzem_number", "start", "end", "analysis_type"),
     "get_monthly_reports": (),
+    "get_diagnostic_recommendations": ("pzem_number", "start", "end", "limit", "severity", "fault_type"),
 }
 
 
