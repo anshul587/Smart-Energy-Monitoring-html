@@ -3,7 +3,7 @@
 << /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
-<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R] /Count 3 >>
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R] /Count 7 >>
 endobj
 3 0 obj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
@@ -15,154 +15,509 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>
 endobj
 6 0 obj
-<< /Length 5009 >>
+<< /Length 4232 >>
 stream
-BT /F2 15 Tf 50 709.0 Td (Monthly Energy Report - 2026-08) Tj ET
-BT /F1 9 Tf 50 698.2 Td (Report period: 2026-08 Generated: 2026-08-27 15:51 UTC Rate: Rs 7.00/kWh) Tj ET
-BT /F2 12 Tf 50 663.8 Td (System Summary) Tj ET
-BT /F1 10 Tf 50 651.8 Td (Total energy \(ACTUAL\): 511.89 kWh) Tj ET
-BT /F1 10 Tf 50 639.8 Td (Average power: 2132.86 W) Tj ET
-BT /F1 10 Tf 50 627.8 Td (Peak power: 3895.96 W) Tj ET
-BT /F1 10 Tf 50 615.8 Td (Peak timestamp: 2026-08-19 06:16 UTC) Tj ET
-BT /F1 10 Tf 50 603.8 Td (Active / available PZEM: 9 / 9) Tj ET
-BT /F2 12 Tf 50 571.4 Td (PZEM Summary) Tj ET
-BT /F2 9 Tf 50 560.4 Td (PZEM      kWh         PeakW     Anom     Fault    Risk       Fcst        Bill      ) Tj ET
-BT /F1 9 Tf 50 548.4 Td ( ) Tj ET
-BT /F1 9 Tf 50 549.4 Td (P1        48.41       413.76    0        0        WATCH      FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 538.4 Td (P2        48.24       413.77    0        0        WATCH      FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 527.4 Td (P3        48.40       398.11    1        0        WATCH      FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 516.4 Td (P4        86.83       713.45    0        0        HIGH       FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 505.4 Td (P5        48.25       399.65    0        1        WATCH      FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 494.4 Td (P6        48.21       408.56    1        0        WATCH      FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 483.4 Td (P7        48.20       399.80    0        0        WATCH      FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 472.4 Td (P8        87.03       741.92    0        0        HIGH       FORECAST    OK        ) Tj ET
-BT /F1 9 Tf 50 461.4 Td (P9        48.32       408.18    1        0        WATCH      FORECAST    OK        ) Tj ET
-BT /F2 12 Tf 50 429.0 Td (AI Insights) Tj ET
-BT /F1 10 Tf 50 417.0 Td (Anomalies: 3 Faults: 1 Emergencies: 0) Tj ET
-BT /F1 10 Tf 50 405.0 Td (Maintenance risk: WATCH:7, HIGH:2) Tj ET
-BT /F1 10 Tf 50 393.0 Td (System forecast: No data) Tj ET
-BT /F1 10 Tf 50 381.0 Td (System bill: OK) Tj ET
-BT /F1 9 Tf 56 370.2 Td ([MEDIUM] PZEM 1 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 05:30-08:00 \(median) Tj ET
-BT /F1 9 Tf 56 359.4 Td (357 W vs typical 210 W\).) Tj ET
-BT /F1 9 Tf 56 348.6 Td ([MEDIUM] PZEM 1 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 05:00-07:30 \(median 348 W vs typical 207) Tj ET
-BT /F1 9 Tf 56 337.8 Td (W\).) Tj ET
-BT /F1 9 Tf 56 327.0 Td ([MEDIUM] PZEM 2 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 05:30-08:00 \(median) Tj ET
-BT /F1 9 Tf 56 316.2 Td (368 W vs typical 205 W\).) Tj ET
-BT /F1 9 Tf 56 305.4 Td ([MEDIUM] PZEM 2 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 05:00-07:30 \(median 353 W vs typical 207) Tj ET
-BT /F1 9 Tf 56 294.6 Td (W\).) Tj ET
-BT /F1 9 Tf 56 283.8 Td ([MEDIUM] PZEM 3 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 07:00-09:30 \(median) Tj ET
-BT /F1 9 Tf 56 273.0 Td (365 W vs typical 204 W\).) Tj ET
-BT /F1 9 Tf 56 262.2 Td ([MEDIUM] PZEM 3 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 06:00-08:30 \(median 348 W vs typical 210) Tj ET
-BT /F1 9 Tf 56 251.4 Td (W\).) Tj ET
-BT /F1 9 Tf 56 240.6 Td ([MEDIUM] PZEM 4 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 80 W, indicating an) Tj ET
-BT /F1 9 Tf 56 229.8 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 4.13 kWh\)) Tj ET
-BT /F1 9 Tf 56 219.0 Td ([MEDIUM] PZEM 4 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 05:00-07:30 \(median) Tj ET
-BT /F1 9 Tf 56 208.2 Td (639 W vs typical 375 W\).) Tj ET
-BT /F1 9 Tf 56 197.4 Td ([MEDIUM] PZEM 4 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 05:30-08:00 \(median 628 W vs typical 375) Tj ET
-BT /F1 9 Tf 56 186.6 Td (W\).) Tj ET
-BT /F1 9 Tf 56 175.8 Td ([MEDIUM] PZEM 5 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 04:00-06:30 \(median) Tj ET
-BT /F1 9 Tf 56 165.0 Td (367 W vs typical 208 W\).) Tj ET
-BT /F1 9 Tf 56 154.2 Td ([MEDIUM] PZEM 5 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 05:00-07:30 \(median 351 W vs typical 209) Tj ET
-BT /F1 9 Tf 56 143.4 Td (W\).) Tj ET
-BT /F1 9 Tf 56 132.6 Td ([MEDIUM] PZEM 6 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 05:00-07:30 \(median) Tj ET
-BT /F1 9 Tf 56 121.8 Td (364 W vs typical 215 W\).) Tj ET
-BT /F1 9 Tf 56 111.0 Td ([MEDIUM] PZEM 6 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 05:00-07:30 \(median 351 W vs typical 209) Tj ET
-BT /F1 9 Tf 56 100.2 Td (W\).) Tj ET
-BT /F1 9 Tf 56 89.4 Td ([MEDIUM] PZEM 7 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 03:30-06:00 \(median) Tj ET
-BT /F1 9 Tf 56 78.6 Td (365 W vs typical 203 W\).) Tj ET
-BT /F1 9 Tf 56 67.8 Td ([MEDIUM] PZEM 7 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 04:00-06:30 \(median 349 W vs typical 212) Tj ET
-BT /F1 9 Tf 56 57.0 Td (W\).) Tj ET
+BT /F2 18 Tf 50 702.4 Td (MONTHLY ENERGY PERFORMANCE REPORT) Tj ET
+BT /F2 11 Tf 50 685.2 Td (Month: September 2026) Tj ET
+BT /F1 10 Tf 50 673.2 Td (Report period: 01 September 2026 - 30 September 2026) Tj ET
+BT /F1 10 Tf 50 661.2 Td (Generated on: 2026-09-20 14:20 UTC) Tj ET
+BT /F1 10 Tf 50 649.2 Td (Electricity rate: Rs7.00 / kWh) Tj ET
+BT /F2 14 Tf 50 612.4 Td (Executive Summary) Tj ET
+BT /F2 11 Tf 50 599.2 Td (Total Energy Used: 511.96 kWh) Tj ET
+BT /F1 10 Tf 50 587.2 Td (Average Power: 2.13 kW) Tj ET
+BT /F1 10 Tf 50 575.2 Td (Peak Power: 3.89 kW) Tj ET
+BT /F1 10 Tf 50 563.2 Td (Peak Time: 12 September 2026, 06:50 UTC) Tj ET
+BT /F1 10 Tf 50 551.2 Td (Monitored Meters: 9 / 9) Tj ET
+BT /F1 10 Tf 50 539.2 Td (Alerts: 4 Anomalies: 3 Faults: 1) Tj ET
+BT /F1 10 Tf 50 527.2 Td (High-Risk Meters: 2) Tj ET
+BT /F2 14 Tf 50 490.4 Td (What Happened This Month?) Tj ET
+BT /F1 10 Tf 50 478.4 Td (During September 2026, the system consumed 511.96 kWh of electricity. The highest recorded demand was) Tj ET
+BT /F1 10 Tf 50 466.4 Td (3.89 kW. 3 anomalies and 1 faults were detected. Two meters were classified as high maintenance risk:) Tj ET
+BT /F1 10 Tf 50 454.4 Td (2 meters classified as high maintenance risk and 7 meters classified as watch.) Tj ET
+BT /F2 14 Tf 50 415.6 Td (System Performance) Tj ET
+BT /F2 9 Tf 50 404.6 Td (Metric                        Value                 Explanation                 ) Tj ET
+BT /F1 9 Tf 50 392.6 Td ( ) Tj ET
+BT /F1 9 Tf 50 393.6 Td (Total Energy Used             511.96 kWh            Total electrical energy cons) Tj ET
+BT /F1 9 Tf 50 382.6 Td (Average Power                 2.13 kW               Mean power draw over the rep) Tj ET
+BT /F1 9 Tf 50 371.6 Td (Peak Power                    3.89 kW               Highest instantaneous power ) Tj ET
+BT /F1 9 Tf 50 360.6 Td (Peak Time                     12 September 2026, 0  Timestamp of the peak demand) Tj ET
+BT /F1 9 Tf 50 349.6 Td (Active Meters                 9 / 9                 PZEM meters reporting data o) Tj ET
+BT /F2 14 Tf 50 310.8 Td (Meter-wise Energy Consumption) Tj ET
+BT /F2 9 Tf 50 299.8 Td (Meter         Energy Used \(kWh\)   Peak Power \(kW\)     Anomalies     Faults      Maintenance Risk    Forecast      Bill Status ) Tj ET
+BT /F1 9 Tf 50 287.8 Td ( ) Tj ET
+BT /F1 9 Tf 50 288.8 Td (PZEM 1        48.42               0.42                0             0           Watch               FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 277.8 Td (PZEM 2        48.25               0.42                0             0           Watch               FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 266.8 Td (PZEM 3        48.40               0.41                1             0           Watch               FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 255.8 Td (PZEM 4        86.84               0.74                0             0           High maintenance r  FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 244.8 Td (PZEM 5        48.26               0.40                0             1           Watch               FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 233.8 Td (PZEM 6        48.22               0.40                1             0           Watch               FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 222.8 Td (PZEM 7        48.20               0.41                0             0           Watch               FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 211.8 Td (PZEM 8        87.04               0.71                0             0           High maintenance r  FORECAST      OK          ) Tj ET
+BT /F1 9 Tf 50 200.8 Td (PZEM 9        48.33               0.41                1             0           Watch               FORECAST      OK          ) Tj ET
+BT /F2 14 Tf 50 162.0 Td (Peak Demand Analysis) Tj ET
+BT /F1 10 Tf 50 150.0 Td (Maximum system power: 0.74 kW) Tj ET
+BT /F1 10 Tf 50 138.0 Td (Peak date: 16 September 2026) Tj ET
+BT /F1 10 Tf 50 126.0 Td (Peak time: 06:30 UTC) Tj ET
+BT /F1 10 Tf 50 114.0 Td (Peak above baseline: 0.36 kW) Tj ET
+BT /F1 9 Tf 50 103.2 Td (Recurring high-demand periods are visible in the charts below.) Tj ET
+BT /F2 14 Tf 50 64.4 Td (Alerts & Abnormal Events) Tj ET
+BT /F1 10 Tf 50 52.4 Td (Summary: 3 anomalies, 1 faults, 0 emergencies) Tj ET
 endstream
 endobj
 7 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 8 0 R >>
 endobj
 8 0 obj
-<< /Length 3735 >>
+<< /Length 4152 >>
 stream
-BT /F1 9 Tf 56 731.2 Td ([MEDIUM] PZEM 8 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 80 W, indicating an) Tj ET
-BT /F1 9 Tf 56 720.4 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 4.05 kWh\)) Tj ET
-BT /F1 9 Tf 56 709.6 Td ([MEDIUM] PZEM 8 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 04:30-07:00 \(median) Tj ET
-BT /F1 9 Tf 56 698.8 Td (646 W vs typical 360 W\).) Tj ET
-BT /F1 9 Tf 56 688.0 Td ([MEDIUM] PZEM 8 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 04:30-07:00 \(median 635 W vs typical 373) Tj ET
-BT /F1 9 Tf 56 677.2 Td (W\).) Tj ET
-BT /F1 9 Tf 56 666.4 Td ([MEDIUM] PZEM 9 RESPOND_PREDICTABLE_HIGH_LOAD: Forecast shows a predictable high-load window 05:30-07:30 \(median) Tj ET
-BT /F1 9 Tf 56 655.6 Td (362 W vs typical 216 W\).) Tj ET
-BT /F1 9 Tf 56 644.8 Td ([MEDIUM] PZEM 9 SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 05:00-07:30 \(median 355 W vs typical 210) Tj ET
-BT /F1 9 Tf 56 634.0 Td (W\).) Tj ET
-BT /F1 9 Tf 56 623.2 Td ([MEDIUM] SYSTEM SHIFT_NON_CRITICAL_LOAD: Recurring high-demand window 05:00-07:30 \(median 3719 W vs typical 2242) Tj ET
-BT /F1 9 Tf 56 612.4 Td (W\).) Tj ET
-BT /F1 9 Tf 56 601.6 Td ([LOW] PZEM 1 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 46 W, indicating an) Tj ET
-BT /F1 9 Tf 56 590.8 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 2.40 kWh\)) Tj ET
-BT /F1 9 Tf 56 580.0 Td ([LOW] PZEM 2 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 44 W, indicating an) Tj ET
-BT /F1 9 Tf 56 569.2 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 2.21 kWh\)) Tj ET
-BT /F1 9 Tf 56 558.4 Td ([LOW] PZEM 3 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 44 W, indicating an) Tj ET
-BT /F1 9 Tf 56 547.6 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 2.19 kWh\)) Tj ET
-BT /F1 9 Tf 56 536.8 Td ([LOW] PZEM 5 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 43 W, indicating an) Tj ET
-BT /F1 9 Tf 56 526.0 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 2.06 kWh\)) Tj ET
-BT /F1 9 Tf 56 515.2 Td ([LOW] PZEM 6 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 44 W, indicating an) Tj ET
-BT /F1 9 Tf 56 504.4 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 2.17 kWh\)) Tj ET
-BT /F1 9 Tf 56 493.6 Td ([LOW] PZEM 7 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 42 W, indicating an) Tj ET
-BT /F1 9 Tf 56 482.8 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 1.94 kWh\)) Tj ET
-BT /F1 9 Tf 56 472.0 Td ([LOW] PZEM 9 REDUCE_IDLE_CONSUMPTION: Minimum observed power \(idle/standby baseline\) is 44 W, indicating an) Tj ET
-BT /F1 9 Tf 56 461.2 Td (always-on load. Curtailing ~30% of it is a realistic saving. \(est 2.17 kWh\)) Tj ET
-BT /F2 12 Tf 50 428.8 Td (Alert Summary) Tj ET
-BT /F1 9 Tf 56 418.0 Td (WARNING PZEM 5 \(OVER_VOLTAGE\) @ 2026-08-26 03:01 UTC) Tj ET
-BT /F2 12 Tf 50 385.6 Td (Visual Summary) Tj ET
-BT /F2 9 Tf 50 387.6 Td (Daily Energy Trend \(kWh\)) Tj ET
-0 0 0 RG 0.5 w
-50.0 275.6 m 50.0 375.6 l 562.0 375.6 l S
-0.14 0.38 0.92 RG 1 w
-50.0 288.9 m 101.2 375.6 l 152.4 375.2 l 203.6 375.4 l 254.8 375.6 l 306.0 375.1 l 357.2 375.5 l 408.4 375.2 l 459.6 375.3 l 510.8 375.4 l 562.0 362.2 l S
-BT /F2 9 Tf 50 269.6 Td (Daily Peak Power \(W\)) Tj ET
-0 0 0 RG 0.5 w
-50.0 157.6 m 50.0 257.6 l 562.0 257.6 l S
-0.14 0.38 0.92 RG 1 w
-50.0 200.3 m 101.2 257.6 l 152.4 257.3 l 203.6 256.6 l 254.8 256.7 l 306.0 255.3 l 357.2 255.4 l 408.4 254.8 l 459.6 255.0 l 510.8 257.6 l 562.0 255.2 l S
+BT /F2 10 Tf 50 730.0 Td (PZEM 5 - Over-voltage condition detected) Tj ET
+BT /F1 9 Tf 56 719.2 Td (Date: 19 September 2026) Tj ET
+BT /F1 9 Tf 56 708.4 Td (Status: Warning) Tj ET
+BT /F2 14 Tf 50 669.6 Td (Maintenance Risk) Tj ET
+BT /F1 10 Tf 50 657.6 Td (- 2 meters: High maintenance risk) Tj ET
+BT /F1 10 Tf 50 645.6 Td (- 7 meters: Watch) Tj ET
+BT /F1 9 Tf 56 634.8 Td (High-risk meters: PZEM 4, PZEM 8) Tj ET
+BT /F1 9 Tf 56 624.0 Td (Watch meters: PZEM 1, PZEM 2, PZEM 3, PZEM 5, PZEM 6, PZEM 7, PZEM 9) Tj ET
+BT /F2 14 Tf 50 585.2 Td (Energy-Saving Recommendations) Tj ET
+BT /F2 11 Tf 50 572.0 Td (PZEM 1 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 561.2 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 550.4 Td (Observation: Forecast shows a predictable high-load window 06:30-09:00 \(median 368 W vs typical 204 W\).) Tj ET
+BT /F2 11 Tf 50 535.2 Td (PZEM 1 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 524.4 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 513.6 Td (Observation: Recurring high-demand window 05:00-07:30 \(median 349 W vs typical 210 W\).) Tj ET
+BT /F2 11 Tf 50 498.4 Td (PZEM 2 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 487.6 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 476.8 Td (Observation: Forecast shows a predictable high-load window 05:30-08:00 \(median 365 W vs typical 213 W\).) Tj ET
+BT /F2 11 Tf 50 461.6 Td (PZEM 2 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 450.8 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 440.0 Td (Observation: Recurring high-demand window 05:30-08:00 \(median 353 W vs typical 207 W\).) Tj ET
+BT /F2 11 Tf 50 424.8 Td (PZEM 3 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 414.0 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 403.2 Td (Observation: Forecast shows a predictable high-load window 05:30-08:00 \(median 383 W vs typical 215 W\).) Tj ET
+BT /F2 11 Tf 50 388.0 Td (PZEM 3 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 377.2 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 366.4 Td (Observation: Recurring high-demand window 05:30-08:00 \(median 351 W vs typical 211 W\).) Tj ET
+BT /F2 11 Tf 50 351.2 Td (PZEM 4 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 340.4 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 329.6 Td (Observation: Minimum observed power \(idle/standby baseline\) is 79 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 318.8 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 308.0 Td (Estimated saving: 3.88 kWh) Tj ET
+BT /F1 9 Tf 56 297.2 Td (Estimated cost impact: Rs27.18) Tj ET
+BT /F2 11 Tf 50 282.0 Td (PZEM 4 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 271.2 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 260.4 Td (Observation: Forecast shows a predictable high-load window 04:30-07:00 \(median 639 W vs typical 371 W\).) Tj ET
+BT /F2 11 Tf 50 245.2 Td (PZEM 4 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 234.4 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 223.6 Td (Observation: Recurring high-demand window 04:30-07:00 \(median 633 W vs typical 372 W\).) Tj ET
+BT /F2 11 Tf 50 208.4 Td (PZEM 5 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 197.6 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 186.8 Td (Observation: Forecast shows a predictable high-load window 06:30-08:30 \(median 355 W vs typical 209 W\).) Tj ET
+BT /F2 11 Tf 50 171.6 Td (PZEM 5 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 160.8 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 150.0 Td (Observation: Recurring high-demand window 06:00-08:30 \(median 350 W vs typical 208 W\).) Tj ET
+BT /F2 11 Tf 50 134.8 Td (PZEM 6 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 124.0 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 113.2 Td (Observation: Forecast shows a predictable high-load window 05:30-08:00 \(median 366 W vs typical 212 W\).) Tj ET
+BT /F2 11 Tf 50 98.0 Td (PZEM 6 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 87.2 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 76.4 Td (Observation: Recurring high-demand window 04:30-07:00 \(median 349 W vs typical 208 W\).) Tj ET
+BT /F2 11 Tf 50 61.2 Td (PZEM 7 - Predictable High-Usage Period) Tj ET
 endstream
 endobj
 9 0 obj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 10 0 R >>
 endobj
 10 0 obj
-<< /Length 565 >>
+<< /Length 4582 >>
 stream
-BT /F2 9 Tf 50 744.0 Td (PZEM Energy Comparison \(kWh\)) Tj ET
+BT /F1 9 Tf 56 731.2 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 720.4 Td (Observation: Forecast shows a predictable high-load window 05:00-07:30 \(median 374 W vs typical 202 W\).) Tj ET
+BT /F2 11 Tf 50 705.2 Td (PZEM 7 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 694.4 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 683.6 Td (Observation: Recurring high-demand window 06:00-08:30 \(median 355 W vs typical 208 W\).) Tj ET
+BT /F2 11 Tf 50 668.4 Td (PZEM 8 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 657.6 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 646.8 Td (Observation: Minimum observed power \(idle/standby baseline\) is 80 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 636.0 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 625.2 Td (Estimated saving: 4.10 kWh) Tj ET
+BT /F1 9 Tf 56 614.4 Td (Estimated cost impact: Rs28.72) Tj ET
+BT /F2 11 Tf 50 599.2 Td (PZEM 8 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 588.4 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 577.6 Td (Observation: Forecast shows a predictable high-load window 06:30-09:00 \(median 666 W vs typical 374 W\).) Tj ET
+BT /F2 11 Tf 50 562.4 Td (PZEM 8 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 551.6 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 540.8 Td (Observation: Recurring high-demand window 05:00-07:30 \(median 634 W vs typical 376 W\).) Tj ET
+BT /F2 11 Tf 50 525.6 Td (PZEM 9 - Predictable High-Usage Period) Tj ET
+BT /F1 9 Tf 56 514.8 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 504.0 Td (Observation: Forecast shows a predictable high-load window 05:00-07:30 \(median 363 W vs typical 211 W\).) Tj ET
+BT /F2 11 Tf 50 488.8 Td (PZEM 9 - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 478.0 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 467.2 Td (Observation: Recurring high-demand window 05:00-07:30 \(median 352 W vs typical 208 W\).) Tj ET
+BT /F2 11 Tf 50 452.0 Td (SYSTEM - Consider Shifting Non-Critical Loads) Tj ET
+BT /F1 9 Tf 56 441.2 Td (Priority: Medium) Tj ET
+BT /F1 9 Tf 56 430.4 Td (Observation: Recurring high-demand window 05:00-07:30 \(median 3718 W vs typical 2235 W\).) Tj ET
+BT /F2 11 Tf 50 415.2 Td (PZEM 1 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 404.4 Td (Priority: Low) Tj ET
+BT /F1 9 Tf 56 393.6 Td (Observation: Minimum observed power \(idle/standby baseline\) is 44 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 382.8 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 372.0 Td (Estimated saving: 2.17 kWh) Tj ET
+BT /F1 9 Tf 56 361.2 Td (Estimated cost impact: Rs15.18) Tj ET
+BT /F2 11 Tf 50 346.0 Td (PZEM 2 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 335.2 Td (Priority: Low) Tj ET
+BT /F1 9 Tf 56 324.4 Td (Observation: Minimum observed power \(idle/standby baseline\) is 45 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 313.6 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 302.8 Td (Estimated saving: 2.34 kWh) Tj ET
+BT /F1 9 Tf 56 292.0 Td (Estimated cost impact: Rs16.35) Tj ET
+BT /F2 11 Tf 50 276.8 Td (PZEM 3 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 266.0 Td (Priority: Low) Tj ET
+BT /F1 9 Tf 56 255.2 Td (Observation: Minimum observed power \(idle/standby baseline\) is 44 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 244.4 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 233.6 Td (Estimated saving: 2.21 kWh) Tj ET
+BT /F1 9 Tf 56 222.8 Td (Estimated cost impact: Rs15.45) Tj ET
+BT /F2 11 Tf 50 207.6 Td (PZEM 5 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 196.8 Td (Priority: Low) Tj ET
+BT /F1 9 Tf 56 186.0 Td (Observation: Minimum observed power \(idle/standby baseline\) is 43 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 175.2 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 164.4 Td (Estimated saving: 2.09 kWh) Tj ET
+BT /F1 9 Tf 56 153.6 Td (Estimated cost impact: Rs14.60) Tj ET
+BT /F2 11 Tf 50 138.4 Td (PZEM 6 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 127.6 Td (Priority: Low) Tj ET
+BT /F1 9 Tf 56 116.8 Td (Observation: Minimum observed power \(idle/standby baseline\) is 45 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 106.0 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 95.2 Td (Estimated saving: 2.34 kWh) Tj ET
+BT /F1 9 Tf 56 84.4 Td (Estimated cost impact: Rs16.35) Tj ET
+BT /F2 11 Tf 50 69.2 Td (PZEM 7 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 58.4 Td (Priority: Low) Tj ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 12 0 R >>
+endobj
+12 0 obj
+<< /Length 3431 >>
+stream
+BT /F1 9 Tf 56 731.2 Td (Observation: Minimum observed power \(idle/standby baseline\) is 43 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 720.4 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 709.6 Td (Estimated saving: 2.09 kWh) Tj ET
+BT /F1 9 Tf 56 698.8 Td (Estimated cost impact: Rs14.65) Tj ET
+BT /F2 11 Tf 50 683.6 Td (PZEM 9 - Reduce Unnecessary Standby Consumption) Tj ET
+BT /F1 9 Tf 56 672.8 Td (Priority: Low) Tj ET
+BT /F1 9 Tf 56 662.0 Td (Observation: Minimum observed power \(idle/standby baseline\) is 45 W, indicating an always-on load. Curtailing) Tj ET
+BT /F1 9 Tf 56 651.2 Td (~30% of it is a realistic saving.) Tj ET
+BT /F1 9 Tf 56 640.4 Td (Estimated saving: 2.28 kWh) Tj ET
+BT /F1 9 Tf 56 629.6 Td (Estimated cost impact: Rs15.95) Tj ET
+BT /F2 14 Tf 50 588.8 Td (Energy Cost) Tj ET
+BT /F1 10 Tf 50 576.8 Td (Electricity rate: Rs7.00 / kWh) Tj ET
+BT /F1 10 Tf 50 564.8 Td (Energy consumed: 511.96 kWh) Tj ET
+BT /F1 10 Tf 50 552.8 Td (Estimated energy cost: Rs9450.00) Tj ET
+BT /F1 10 Tf 50 540.8 Td (Estimated total energy: 1350.00 kWh) Tj ET
+BT /F2 14 Tf 50 502.0 Td (Energy Forecast) Tj ET
+BT /F1 10 Tf 50 490.0 Td (Forecast unavailable) Tj ET
+BT /F1 9 Tf 50 479.2 Td (Insufficient forecast data was available for the system during this report period.) Tj ET
+BT /F2 14 Tf 50 440.4 Td (Charts) Tj ET
+BT /F2 11 Tf 50 414.4 Td (Daily Energy Consumption) Tj ET
 0 0 0 RG 0.5 w
-50.0 632.0 m 50.0 732.0 l 562.0 732.0 l S
+95.0 197.4 m 95.0 192.4 l S
+95.0 197.4 m 552.0 197.4 l S
+95.0 192.4 m 92.0 188.4 l S
+95.0 192.4 m 98.0 188.4 l S
+552.0 197.4 m 548.0 200.4 l S
+552.0 197.4 m 548.0 194.4 l S
+95.0 197.4 m 92.0 197.4 l S
+BT /F1 7 Tf 87.0 199.4 Td (0.00) Tj ET
+95.0 196.4 m 92.0 196.4 l S
+BT /F1 7 Tf 87.0 198.4 Td (10.27) Tj ET
+95.0 195.4 m 92.0 195.4 l S
+BT /F1 7 Tf 87.0 197.4 Td (20.53) Tj ET
+95.0 194.4 m 92.0 194.4 l S
+BT /F1 7 Tf 87.0 196.4 Td (30.80) Tj ET
+95.0 193.4 m 92.0 193.4 l S
+BT /F1 7 Tf 87.0 195.4 Td (41.07) Tj ET
+95.0 192.4 m 92.0 192.4 l S
+BT /F1 7 Tf 87.0 194.4 Td (51.34) Tj ET
+BT /F1 8 Tf 50 302.4 Td (Energy (kWh)) Tj ET
+BT /F1 7 Tf 105.8 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 147.3 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 188.9 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 230.4 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 272.0 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 313.5 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 355.0 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 396.6 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 438.1 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 479.7 207.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 521.2 207.4 Td (2026-09-) Tj ET
+BT /F1 8 Tf 286.0 217.4 Td (Date) Tj ET
 0.14 0.38 0.92 rg
-58.5 632.0 39.8 100.0 re f
-115.4 632.0 39.8 99.8 re f
-172.3 632.0 39.8 55.6 re f
-229.2 632.0 39.8 55.6 re f
-286.1 632.0 39.8 55.5 re f
-343.0 632.0 39.8 55.4 re f
-399.9 632.0 39.8 55.4 re f
-456.8 632.0 39.8 55.4 re f
-513.6 632.0 39.8 55.4 re f
-BT /F2 9 Tf 50 626.0 Td (Anomaly / Fault Count) Tj ET
+101.2 197.4 29.1 -0.8 re f
+BT /F1 6 Tf 115.8 204.6 Td (8.61) Tj ET
+142.8 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 157.3 200.4 Td (51.30) Tj ET
+184.3 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 198.9 200.4 Td (51.05) Tj ET
+225.9 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 240.4 200.4 Td (51.17) Tj ET
+267.4 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 282.0 200.4 Td (51.34) Tj ET
+309.0 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 323.5 200.4 Td (51.09) Tj ET
+350.5 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 365.0 200.4 Td (51.23) Tj ET
+392.0 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 406.6 200.4 Td (51.18) Tj ET
+433.6 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 448.1 200.4 Td (51.15) Tj ET
+475.1 197.4 29.1 -5.0 re f
+BT /F1 6 Tf 489.7 200.4 Td (51.22) Tj ET
+516.7 197.4 29.1 -4.2 re f
+BT /F1 6 Tf 531.2 201.2 Td (42.62) Tj ET
+BT /F1 9 Tf 50 173.6 Td (Highest daily energy consumption: 51.34 kWh on 2026-09-15.) Tj ET
+endstream
+endobj
+13 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 14 0 R >>
+endobj
+14 0 obj
+<< /Length 1965 >>
+stream
+BT /F2 11 Tf 50 139.6 Td (Daily Peak Power) Tj ET
 0 0 0 RG 0.5 w
-50.0 514.0 m 50.0 614.0 l 562.0 614.0 l S
+95.0 -77.4 m 95.0 -82.4 l S
+95.0 -77.4 m 552.0 -77.4 l S
+95.0 -82.4 m 92.0 -86.4 l S
+95.0 -82.4 m 98.0 -86.4 l S
+552.0 -77.4 m 548.0 -74.4 l S
+552.0 -77.4 m 548.0 -80.4 l S
+95.0 -77.4 m 92.0 -77.4 l S
+BT /F1 7 Tf 87.0 -75.4 Td (0.00) Tj ET
+95.0 -78.4 m 92.0 -78.4 l S
+BT /F1 7 Tf 87.0 -76.4 Td (0.00) Tj ET
+95.0 -79.4 m 92.0 -79.4 l S
+BT /F1 7 Tf 87.0 -77.4 Td (0.00) Tj ET
+95.0 -80.4 m 92.0 -80.4 l S
+BT /F1 7 Tf 87.0 -78.4 Td (0.00) Tj ET
+95.0 -81.4 m 92.0 -81.4 l S
+BT /F1 7 Tf 87.0 -79.4 Td (0.00) Tj ET
+95.0 -82.4 m 92.0 -82.4 l S
+BT /F1 7 Tf 87.0 -80.4 Td (0.00) Tj ET
+BT /F1 8 Tf 50 27.6 Td (Peak Power (kW)) Tj ET
+BT /F1 7 Tf 105.8 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 147.3 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 188.9 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 230.4 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 272.0 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 313.5 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 355.0 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 396.6 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 438.1 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 479.7 -67.4 Td (2026-09-) Tj ET
+BT /F1 7 Tf 521.2 -67.4 Td (2026-09-) Tj ET
+BT /F1 8 Tf 286.0 -57.4 Td (Date) Tj ET
 0.14 0.38 0.92 rg
-88.4 514.0 179.2 100.0 re f
-344.4 514.0 179.2 33.3 re f
+101.2 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 115.8 -69.4 Td (0.00) Tj ET
+142.8 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 157.3 -69.4 Td (0.00) Tj ET
+184.3 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 198.9 -69.4 Td (0.00) Tj ET
+225.9 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 240.4 -69.4 Td (0.00) Tj ET
+267.4 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 282.0 -69.4 Td (0.00) Tj ET
+309.0 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 323.5 -69.4 Td (0.00) Tj ET
+350.5 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 365.0 -69.4 Td (0.00) Tj ET
+392.0 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 406.6 -69.4 Td (0.00) Tj ET
+433.6 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 448.1 -69.4 Td (0.00) Tj ET
+475.1 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 489.7 -69.4 Td (0.00) Tj ET
+516.7 -77.4 29.1 -0.0 re f
+BT /F1 6 Tf 531.2 -69.4 Td (0.00) Tj ET
+endstream
+endobj
+15 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 16 0 R >>
+endobj
+16 0 obj
+<< /Length 4092 >>
+stream
+BT /F1 9 Tf 50 731.2 Td (Highest daily peak: 3.89 kW on 2026-09-12.) Tj ET
+BT /F1 9 Tf 50 716.4 Td (Key value: 2026-09-12 = 3.89 kW) Tj ET
+BT /F2 11 Tf 50 686.4 Td (Energy Consumption by Meter) Tj ET
+0 0 0 RG 0.5 w
+95.0 469.4 m 95.0 464.4 l S
+95.0 469.4 m 552.0 469.4 l S
+95.0 464.4 m 92.0 460.4 l S
+95.0 464.4 m 98.0 460.4 l S
+552.0 469.4 m 548.0 472.4 l S
+552.0 469.4 m 548.0 466.4 l S
+95.0 469.4 m 92.0 469.4 l S
+BT /F1 7 Tf 87.0 471.4 Td (0.00) Tj ET
+95.0 468.4 m 92.0 468.4 l S
+BT /F1 7 Tf 87.0 470.4 Td (17.41) Tj ET
+95.0 467.4 m 92.0 467.4 l S
+BT /F1 7 Tf 87.0 469.4 Td (34.82) Tj ET
+95.0 466.4 m 92.0 466.4 l S
+BT /F1 7 Tf 87.0 468.4 Td (52.23) Tj ET
+95.0 465.4 m 92.0 465.4 l S
+BT /F1 7 Tf 87.0 467.4 Td (69.63) Tj ET
+95.0 464.4 m 92.0 464.4 l S
+BT /F1 7 Tf 87.0 466.4 Td (87.04) Tj ET
+BT /F1 8 Tf 50 574.4 Td (Energy (kWh)) Tj ET
+BT /F1 7 Tf 110.4 479.4 Td (PZEM 8) Tj ET
+BT /F1 7 Tf 161.2 479.4 Td (PZEM 4) Tj ET
+BT /F1 7 Tf 211.9 479.4 Td (PZEM 1) Tj ET
+BT /F1 7 Tf 262.7 479.4 Td (PZEM 3) Tj ET
+BT /F1 7 Tf 313.5 479.4 Td (PZEM 9) Tj ET
+BT /F1 7 Tf 364.3 479.4 Td (PZEM 5) Tj ET
+BT /F1 7 Tf 415.1 479.4 Td (PZEM 2) Tj ET
+BT /F1 7 Tf 465.8 479.4 Td (PZEM 6) Tj ET
+BT /F1 7 Tf 516.6 479.4 Td (PZEM 7) Tj ET
+BT /F1 8 Tf 286.0 489.4 Td (Meter) Tj ET
+0.14 0.38 0.92 rg
+102.6 469.4 35.5 -5.0 re f
+BT /F1 6 Tf 120.4 472.4 Td (87.04) Tj ET
+153.4 469.4 35.5 -5.0 re f
+BT /F1 6 Tf 171.2 472.4 Td (86.84) Tj ET
+204.2 469.4 35.5 -2.8 re f
+BT /F1 6 Tf 221.9 474.6 Td (48.42) Tj ET
+255.0 469.4 35.5 -2.8 re f
+BT /F1 6 Tf 272.7 474.6 Td (48.40) Tj ET
+305.7 469.4 35.5 -2.8 re f
+BT /F1 6 Tf 323.5 474.6 Td (48.33) Tj ET
+356.5 469.4 35.5 -2.8 re f
+BT /F1 6 Tf 374.3 474.6 Td (48.26) Tj ET
+407.3 469.4 35.5 -2.8 re f
+BT /F1 6 Tf 425.1 474.6 Td (48.25) Tj ET
+458.1 469.4 35.5 -2.8 re f
+BT /F1 6 Tf 475.8 474.6 Td (48.22) Tj ET
+508.8 469.4 35.5 -2.8 re f
+BT /F1 6 Tf 526.6 474.6 Td (48.20) Tj ET
+BT /F1 9 Tf 50 445.6 Td (Highest daily energy consumption: 87.04 kWh on PZEM 8.) Tj ET
+BT /F2 9 Tf 50 430.8 Td (Top Energy Consumers:) Tj ET
+BT /F2 9 Tf 50 419.8 Td (Meter           Energy        ) Tj ET
+BT /F1 9 Tf 50 407.8 Td ( ) Tj ET
+BT /F1 9 Tf 50 408.8 Td (PZEM 8          87.04 kWh     ) Tj ET
+BT /F1 9 Tf 50 397.8 Td (PZEM 4          86.84 kWh     ) Tj ET
+BT /F1 9 Tf 50 386.8 Td (PZEM 1          48.42 kWh     ) Tj ET
+BT /F1 9 Tf 50 375.8 Td (PZEM 3          48.40 kWh     ) Tj ET
+BT /F1 9 Tf 50 364.8 Td (PZEM 9          48.33 kWh     ) Tj ET
+BT /F2 11 Tf 50 334.8 Td (Anomalies and Faults by Meter) Tj ET
+0 0 0 RG 0.5 w
+95.0 117.8 m 95.0 112.8 l S
+95.0 117.8 m 552.0 117.8 l S
+95.0 112.8 m 92.0 108.8 l S
+95.0 112.8 m 98.0 108.8 l S
+552.0 117.8 m 548.0 120.8 l S
+552.0 117.8 m 548.0 114.8 l S
+95.0 117.8 m 92.0 117.8 l S
+BT /F1 7 Tf 87.0 119.8 Td (0.00) Tj ET
+95.0 116.8 m 92.0 116.8 l S
+BT /F1 7 Tf 87.0 118.8 Td (0.20) Tj ET
+95.0 115.8 m 92.0 115.8 l S
+BT /F1 7 Tf 87.0 117.8 Td (0.40) Tj ET
+95.0 114.8 m 92.0 114.8 l S
+BT /F1 7 Tf 87.0 116.8 Td (0.60) Tj ET
+95.0 113.8 m 92.0 113.8 l S
+BT /F1 7 Tf 87.0 115.8 Td (0.80) Tj ET
+95.0 112.8 m 92.0 112.8 l S
+BT /F1 7 Tf 87.0 114.8 Td (1.00) Tj ET
+BT /F1 8 Tf 50 222.8 Td (Count) Tj ET
+BT /F1 7 Tf 142.1 127.8 Td (PZEM 3) Tj ET
+BT /F1 7 Tf 256.4 127.8 Td (PZEM 5) Tj ET
+BT /F1 7 Tf 370.6 127.8 Td (PZEM 6) Tj ET
+BT /F1 7 Tf 484.9 127.8 Td (PZEM 9) Tj ET
+BT /F1 8 Tf 286.0 137.8 Td (Meter) Tj ET
+0.14 0.38 0.92 rg
+106.4 117.8 38.1 -5.0 re f
+BT /F1 6 Tf 125.5 120.8 Td (1.0) Tj ET
+220.7 117.8 38.1 -0.0 re f
+334.9 117.8 38.1 -5.0 re f
+BT /F1 6 Tf 354.0 120.8 Td (1.0) Tj ET
+449.2 117.8 38.1 -5.0 re f
+BT /F1 6 Tf 468.2 120.8 Td (1.0) Tj ET
+0.92 0.38 0.14 rg
+144.5 117.8 38.1 -0.0 re f
+258.8 117.8 38.1 -5.0 re f
+BT /F1 6 Tf 277.8 120.8 Td (1.0) Tj ET
+373.0 117.8 38.1 -0.0 re f
+487.3 117.8 38.1 -0.0 re f
+BT /F1 8 Tf 432.0 137.8 Td (Legend:) Tj ET
+0.14 0.38 0.92 rg
+477.0 139.8 m 483.0 139.8 l 483.0 133.8 l 477.0 133.8 l S
+BT /F1 7 Tf 487.0 135.8 Td (Anomalies) Tj ET
+0.92 0.38 0.14 rg
+537.0 139.8 m 543.0 139.8 l 543.0 133.8 l 537.0 133.8 l S
+BT /F1 7 Tf 547.0 135.8 Td (Faults) Tj ET
+BT /F2 14 Tf 50 58.0 Td (Technical Details / Appendix) Tj ET
+endstream
+endobj
+17 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 18 0 R >>
+endobj
+18 0 obj
+<< /Length 2396 >>
+stream
+BT /F1 9 Tf 50 731.2 Td (Internal recommendation codes \(traceability\):) Tj ET
+BT /F1 8 Tf 56 721.6 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 1 - Medium) Tj ET
+BT /F1 8 Tf 56 712.0 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 1 - Medium) Tj ET
+BT /F1 8 Tf 56 702.4 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 2 - Medium) Tj ET
+BT /F1 8 Tf 56 692.8 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 2 - Medium) Tj ET
+BT /F1 8 Tf 56 683.2 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 3 - Medium) Tj ET
+BT /F1 8 Tf 56 673.6 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 3 - Medium) Tj ET
+BT /F1 8 Tf 56 664.0 Td (REDUCE_IDLE_CONSUMPTION - PZEM 4 - Medium) Tj ET
+BT /F1 8 Tf 56 654.4 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 4 - Medium) Tj ET
+BT /F1 8 Tf 56 644.8 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 4 - Medium) Tj ET
+BT /F1 8 Tf 56 635.2 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 5 - Medium) Tj ET
+BT /F1 8 Tf 56 625.6 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 5 - Medium) Tj ET
+BT /F1 8 Tf 56 616.0 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 6 - Medium) Tj ET
+BT /F1 8 Tf 56 606.4 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 6 - Medium) Tj ET
+BT /F1 8 Tf 56 596.8 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 7 - Medium) Tj ET
+BT /F1 8 Tf 56 587.2 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 7 - Medium) Tj ET
+BT /F1 8 Tf 56 577.6 Td (REDUCE_IDLE_CONSUMPTION - PZEM 8 - Medium) Tj ET
+BT /F1 8 Tf 56 568.0 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 8 - Medium) Tj ET
+BT /F1 8 Tf 56 558.4 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 8 - Medium) Tj ET
+BT /F1 8 Tf 56 548.8 Td (RESPOND_PREDICTABLE_HIGH_LOAD - PZEM 9 - Medium) Tj ET
+BT /F1 8 Tf 56 539.2 Td (SHIFT_NON_CRITICAL_LOAD - PZEM 9 - Medium) Tj ET
+BT /F1 8 Tf 56 529.6 Td (SHIFT_NON_CRITICAL_LOAD - SYSTEM - Medium) Tj ET
+BT /F1 8 Tf 56 520.0 Td (REDUCE_IDLE_CONSUMPTION - PZEM 1 - Low) Tj ET
+BT /F1 8 Tf 56 510.4 Td (REDUCE_IDLE_CONSUMPTION - PZEM 2 - Low) Tj ET
+BT /F1 8 Tf 56 500.8 Td (REDUCE_IDLE_CONSUMPTION - PZEM 3 - Low) Tj ET
+BT /F1 8 Tf 56 491.2 Td (REDUCE_IDLE_CONSUMPTION - PZEM 5 - Low) Tj ET
+BT /F1 8 Tf 56 481.6 Td (REDUCE_IDLE_CONSUMPTION - PZEM 6 - Low) Tj ET
+BT /F1 8 Tf 56 472.0 Td (REDUCE_IDLE_CONSUMPTION - PZEM 7 - Low) Tj ET
+BT /F1 8 Tf 56 462.4 Td (REDUCE_IDLE_CONSUMPTION - PZEM 9 - Low) Tj ET
+BT /F1 9 Tf 50 451.6 Td (Fault types \(internal codes\):) Tj ET
+BT /F1 8 Tf 56 442.0 Td (OVER_VOLTAGE - PZEM 5 - WARNING) Tj ET
+BT /F1 8 Tf 50 432.4 Td (Report generated by Smart Energy Monitoring System.) Tj ET
 endstream
 endobj
 xref
-0 11
+0 19
 0000000000 65535 f 
 0000000009 00000 n 
 0000000058 00000 n 
-0000000127 00000 n 
-0000000197 00000 n 
-0000000272 00000 n 
-0000000408 00000 n 
-0000005469 00000 n 
-0000005605 00000 n 
-0000009392 00000 n 
-0000009529 00000 n 
+0000000155 00000 n 
+0000000225 00000 n 
+0000000300 00000 n 
+0000000436 00000 n 
+0000004720 00000 n 
+0000004856 00000 n 
+0000009060 00000 n 
+0000009197 00000 n 
+0000013832 00000 n 
+0000013970 00000 n 
+0000017454 00000 n 
+0000017592 00000 n 
+0000019610 00000 n 
+0000019748 00000 n 
+0000023893 00000 n 
+0000024031 00000 n 
 trailer
-<< /Size 11 /Root 1 0 R >>
+<< /Size 19 /Root 1 0 R >>
 startxref
-10146
+26480
 %%EOF
