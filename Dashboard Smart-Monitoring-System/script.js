@@ -1609,7 +1609,7 @@ function attachFaultAlertListener() {
    The API endpoint returns one entry per PZEM with a truthful status field. */
 async function loadAIStatus() {
   try {
-    const resp = await fetch('/api/v1/ai-status');
+    const resp = await fetch('https://smart-energy-monitoring-html.onrender.com/api/v1/ai-status');
     if (!resp.ok) return;
     const data = await resp.json();
     if (!data.data) return;
