@@ -1124,17 +1124,19 @@ function renderDashboard() {
     card.querySelector(".meter-number").textContent = String(index + 1).padStart(2, "0");
     card.querySelector(".meter-name").textContent = `PZEM ${index + 1}`;
     card.querySelector(".meter-id").textContent = id.toUpperCase();
-    // OFF/stale meters show numeric zero, never "--" and never the old
-    // stale Firebase reading — these zeros are a UI-only placeholder
-    // meaning "no current live measurement available" (Part 1/6). Nothing
-    // is written back to Firebase and no historical data is touched.
-    card.querySelector(".meter-power strong").textContent = isLive ? number(power, 1) : "0";
-    card.querySelector(".voltage").textContent = isLive ? `${number(meter.voltage, 1)} V` : "0 V";
-    card.querySelector(".current").textContent = isLive ? `${number(meter.current, 2)} A` : "0.00 A";
-    card.querySelector(".energy").textContent = isLive ? `${number(meter.energy, 2)} kWh` : "0.00 kWh";
-    card.querySelector(".pf").textContent = isLive ? number(meter.pf, 2) : "0.00";
+    // A stale/offline meter has NO current measurement. Show "—", never a
+    // numeric zero: a real measured 0 W must stay distinguishable from "no
+    // reading available". The card still carries the `offline` class, the
+    // OFFLINE pill and the "Last seen: …" badge, so the reason is explicit.
+    // This mirrors the backend, which reports power as null for offline
+    // meters rather than fabricating a 0.
+    card.querySelector(".meter-power strong").textContent = isLive ? number(power, 1) : "—";
+    card.querySelector(".voltage").textContent = isLive ? `${number(meter.voltage, 1)} V` : "—";
+    card.querySelector(".current").textContent = isLive ? `${number(meter.current, 2)} A` : "—";
+    card.querySelector(".energy").textContent = isLive ? `${number(meter.energy, 2)} kWh` : "—";
+    card.querySelector(".pf").textContent = isLive ? number(meter.pf, 2) : "—";
     const freqCell = card.querySelector(".freq");
-    if (freqCell) freqCell.textContent = isLive ? `${number(meter.frequency, 1)} Hz` : "0.00 Hz";
+    if (freqCell) freqCell.textContent = isLive ? `${number(meter.frequency, 1)} Hz` : "—";
     card.querySelector(".power-track span").style.width = `${isLive ? Math.min((power / maxPower) * 100, 100) : 0}%`;
     updatePowerViz(card, power, isLive);
 
@@ -1365,9 +1367,12 @@ function timestampMilliseconds(timestamp) {
 
 /* Returns the Firebase history path prefix based on DATA_SOURCE.
    Live:  history/pzem_N/<unix-seconds>   (written by firmware)
-   Synthetic: ai/synthetic_history/pzem_N/<timestamp>   (written by seed script) */
+   Synthetic: ai/synthetic_history/pzem_N/<timestamp>   (written by seed script)
+   The returned prefix MUST end in "/" — every caller appends "pzem_N"
+   directly (${historyPrefix()}pzem_${n}), so a prefix without the trailing
+   slash silently builds the non-existent node "historypzem_1". */
 function historyPrefix() {
-  return DATA_SOURCE === "synthetic" ? "ai/synthetic_history" : "history";
+  return DATA_SOURCE === "synthetic" ? "ai/synthetic_history/" : "history/";
 }
 
 /* Uses the exact same range interpretation as the PZEM popup's Historical
@@ -1751,6 +1756,11 @@ firebase.auth().signInAnonymously().catch((error) => {
   showConnectionError("Sign-in failed — see console");
 });
 
+/* Timer handle for the recurring bill refresh. Created ONLY after auth
+   succeeds (RTDB reads are denied until then) and only once, so a
+   sign-out/sign-in cycle can never leave two intervals running. */
+let billRefreshTimer = null;
+
 firebase.auth().onAuthStateChanged((user) => {
   if (user) {
     loadAIStatus();
@@ -1758,6 +1768,19 @@ firebase.auth().onAuthStateChanged((user) => {
     attachFaultAlertListener();
     attachAIImplListener();
     initForecastPanel();
+    /* The history chart and the bill both read Firebase directly, and
+       Firebase security rules deny those reads to an unauthenticated
+       client. They must NOT run at top level — doing so rejected every
+       read with permission_denied and left the bill permanently on
+       "Insufficient historical data". */
+    loadPowerHistory("7d");
+    loadBillHistoricalData();
+    if (!billRefreshTimer) {
+      billRefreshTimer = setInterval(loadBillHistoricalData, HISTORY_SLOT_MS);
+    }
+  } else if (billRefreshTimer) {
+    clearInterval(billRefreshTimer);
+    billRefreshTimer = null;
   }
 });
 
@@ -1869,15 +1892,10 @@ $('exportButton').addEventListener('click', async () => {
 
 
 renderDashboard();
-loadPowerHistory("7d");
-loadBillHistoricalData();
 
-/* Refresh the bill's historical consumption on the same cadence new
-   "history/pzem_N" rows actually arrive (HISTORY_SLOT_MS = 5 min), so the
-   bill stays current without needing a page reload. Independent of the 5 s
-   freshness-recheck timer below, which only re-evaluates live/offline
-   status and does not touch bill data. */
-setInterval(loadBillHistoricalData, HISTORY_SLOT_MS);
+/* loadPowerHistory("7d"), loadBillHistoricalData() and their HISTORY_SLOT_MS
+   refresh timer now live in the onAuthStateChanged(user) callback above —
+   they need an authenticated client to read "history/pzem_N". */
 
 /* =========================================================================
    PZEM DETAIL POPUP (ADD-ON FEATURE)
@@ -2479,13 +2497,14 @@ function renderModalOverview() {
   const meter = getMeter(activeMeterNumber);
   const isLive = isMeterFresh(meter);
 
-  // Same UI-only zero placeholder as the cards when OFF/stale (Part 1/6) —
-  // never "--", never the last stale Firebase reading.
-  $("modalPower").innerHTML = isLive ? `${number(normalizePowerWatts(meter), 1)} <small>W</small>` : `0 <small>W</small>`;
-  $("modalVoltage").innerHTML = isLive ? `${number(meter.voltage, 1)} <small>V</small>` : `0 <small>V</small>`;
-  $("modalCurrent").innerHTML = isLive ? `${number(meter.current, 2)} <small>A</small>` : `0.00 <small>A</small>`;
-  $("modalEnergy").innerHTML = isLive ? `${number(meter.energy, 2)} <small>kWh</small>` : `0.00 <small>kWh</small>`;
-  $("modalPF").textContent = isLive ? number(meter.pf, 2) : "0.00";
+  // Same rule as the cards: a stale/offline meter has no current
+  // measurement, so show "—" rather than a fabricated numeric zero. The
+  // modal's own status pill and the "Last seen" badge carry the reason.
+  $("modalPower").innerHTML = isLive ? `${number(normalizePowerWatts(meter), 1)} <small>W</small>` : `—`;
+  $("modalVoltage").innerHTML = isLive ? `${number(meter.voltage, 1)} <small>V</small>` : `—`;
+  $("modalCurrent").innerHTML = isLive ? `${number(meter.current, 2)} <small>A</small>` : `—`;
+  $("modalEnergy").innerHTML = isLive ? `${number(meter.energy, 2)} <small>kWh</small>` : `—`;
+  $("modalPF").textContent = isLive ? number(meter.pf, 2) : "—";
 
   const { communication, ac } = getThreeStatus(meter);
 
@@ -2862,13 +2881,14 @@ function refreshFreshnessOnly() {
     const power = isLive ? normalizePowerWatts(meter) : 0;
     const { communication, ac } = getThreeStatus(meter);
 
-    card.querySelector(".meter-power strong").textContent = isLive ? number(power, 1) : "0";
-    card.querySelector(".voltage").textContent = isLive ? `${number(meter.voltage, 1)} V` : "0 V";
-    card.querySelector(".current").textContent = isLive ? `${number(meter.current, 2)} A` : "0.00 A";
-    card.querySelector(".energy").textContent = isLive ? `${number(meter.energy, 2)} kWh` : "0.00 kWh";
-    card.querySelector(".pf").textContent = isLive ? number(meter.pf, 2) : "0.00";
+    // Must match renderDashboard(): stale/offline = "—", never a fake 0.
+    card.querySelector(".meter-power strong").textContent = isLive ? number(power, 1) : "—";
+    card.querySelector(".voltage").textContent = isLive ? `${number(meter.voltage, 1)} V` : "—";
+    card.querySelector(".current").textContent = isLive ? `${number(meter.current, 2)} A` : "—";
+    card.querySelector(".energy").textContent = isLive ? `${number(meter.energy, 2)} kWh` : "—";
+    card.querySelector(".pf").textContent = isLive ? number(meter.pf, 2) : "—";
     const freqCell = card.querySelector(".freq");
-    if (freqCell) freqCell.textContent = isLive ? `${number(meter.frequency, 1)} Hz` : "0.00 Hz";
+    if (freqCell) freqCell.textContent = isLive ? `${number(meter.frequency, 1)} Hz` : "—";
     card.querySelector(".power-track span").style.width = `${isLive ? Math.min((power / maxPower) * 100, 100) : 0}%`;
     updatePowerViz(card, power, isLive);
 
