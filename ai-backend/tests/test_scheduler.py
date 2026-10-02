@@ -421,3 +421,41 @@ def test_no_writes_when_no_new_data(tmp_path):
     sched.tick(1000.0)
     sched.tick(5000.0)
     assert calls["n"] == 1  # only the bootstrap run, then incremental skip
+
+
+# ---------------------------------------------------------------------------
+# 21. the scheduler has an executable entry point
+#
+# Before this existed, nothing could start the scheduler outside a test, so
+# Stages 1-11 never ran in production and /ai/energy_saving was never written.
+# The worker service in render.yaml invokes `python -m ai.scheduler`.
+# ---------------------------------------------------------------------------
+
+def test_scheduler_entry_point_is_reachable(monkeypatch, tmp_path):
+    import inspect
+
+    import ai.scheduler as sched_mod
+
+    # `python -m ai.scheduler` only calls main() if the module guard exists.
+    src = inspect.getsource(sched_mod)
+    assert '__name__ == "__main__"' in src
+
+    built = {}
+
+    class _FakeScheduler:
+        def __init__(self, config=None):
+            built["config"] = config
+
+        def run_forever(self, poll_seconds=60, stop_event=None):
+            built["poll_seconds"] = poll_seconds
+
+    monkeypatch.setattr(sched_mod, "Scheduler", _FakeScheduler)
+    monkeypatch.setattr(sched_mod, "get_scheduler_config",
+                        lambda: SchedulerConfig(state_file=str(tmp_path / "s.json")))
+    assert callable(sched_mod.main)
+
+    sched_mod.main()
+
+    assert isinstance(built["config"], SchedulerConfig)
+    assert built["poll_seconds"] == sched_mod.SCHEDULER_POLL_SECONDS
+    assert built["poll_seconds"] > 0

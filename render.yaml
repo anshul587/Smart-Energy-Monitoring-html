@@ -32,3 +32,36 @@ services:
         type: secret
     autoDeploy: true
     plan: free
+
+  # Stage 14 scheduler. Runs continuously as its own Render worker so the AI
+  # pipeline (incl. Stage 11 -> /ai/energy_saving) actually executes; the web
+  # service above stays a read-only results API and is unchanged. Background
+  # workers are not available on the free plan, so this service needs a paid
+  # instance type.
+  - type: worker
+    name: ai-scheduler
+    env: python
+    pythonVersion: "3.11"
+    buildCommand: cd ai-backend && pip install -r requirements.txt
+    startCommand: cd ai-backend && sh start_scheduler.sh
+    envVars:
+      - key: DATA_SOURCE
+        value: live
+      - key: PZEM_COUNT
+        value: "9"
+      - key: HISTORY_RETENTION_DAYS
+        value: "60"
+      - key: BILL_RATE_PER_KWH
+        value: "5.0"
+      - key: FIREBASE_DATABASE_URL
+        value: https://smart-energy-monitoring-5a2a4-default-rtdb.asia-southeast1.firebasedatabase.app
+      - key: AI_CACHE_DIR
+        value: ./.cache
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: FIREBASE_SERVICE_ACCOUNT_PATH
+        value: ./secrets/firebase-service-account.json
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        type: secret
+    autoDeploy: true
+    plan: starter

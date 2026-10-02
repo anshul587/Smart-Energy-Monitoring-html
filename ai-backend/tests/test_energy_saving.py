@@ -26,6 +26,7 @@ from ai.energy_saving import (
     build_energy_saving_payload,
     compute_anchor,
     generate_recommendations,
+    run_stage_11_pipeline,
     set_firebase_ref_for_test,
     write_energy_saving,
 )
@@ -146,6 +147,75 @@ def test_poor_power_factor():
     assert r is not None
     # PF correction is not an active-energy (kWh) saving on a kWh tariff
     assert r.potential_saving_kwh is None
+
+
+# ---------------------------------------------------------------------------
+# 4b. PF == 0 is a nil-load signature, never a poor-power-factor condition
+#
+# A PZEM reports pf == 0 exactly when no current is flowing. Measured over all
+# 685 live rows, pf == 0 <=> power == 0 with zero exceptions, and on loaded rows
+# pf is valid. So a median PF of 0 means "nothing was connected", not "poor
+# power factor", and must not produce IMPROVE_POWER_FACTOR.
+# ---------------------------------------------------------------------------
+
+def _nil_load_frame(zero_fraction=0.8, days=4, n_per_day=288):
+    """Real nil-load shape: pf is exactly 0 on every row where power is 0, and
+    ~1.0 on the rows where the meter is actually loaded. With zero_fraction
+    above 0.5 the median PF is 0 while the meter still has real load samples."""
+    n = days * n_per_day
+    ts = np.arange(BASE_TS, BASE_TS + n * 300, 300)
+    dead = np.zeros(n, dtype=bool)
+    dead[: int(n * zero_fraction)] = True
+    power = np.where(dead, 0.0, 50.0)
+    return pd.DataFrame({
+        "timestamp": ts,
+        "voltage": 230.0,
+        "current": np.where(dead, 0.0, 0.22),
+        "power": power,
+        "energy": np.cumsum(power * 300 / 3600.0),
+        "frequency": 50.0,
+        "pf": np.where(dead, 0.0, 1.0),
+    })
+
+
+def test_detect_pf_skips_nil_load():
+    frame = _nil_load_frame()
+    # sanity: this frame really is the shape the audit measured
+    assert float(frame["pf"].median()) == 0.0
+    assert (frame.loc[frame["power"] == 0, "pf"] == 0).all()
+    assert (frame.loc[frame["power"] > 0, "pf"] == 1.0).all()
+
+    ev = MeterEvidence(pzem_number=1, feature_frame=frame)
+    recs = analyze_meter(ev, 0.0, BASE_TS)
+    assert not any(r.recommendation_type == "IMPROVE_POWER_FACTOR" for r in recs)
+    # nil-load data is not an energy-saving condition at all
+    assert recs == []
+
+
+def test_detect_pf_skips_all_zero_pf_frame():
+    frame = make_frame(power_profile=lambda t: 0.0, pf=0.0, base_current=0.0)
+    assert (frame["pf"] == 0).all() and (frame["power"] == 0).all()
+
+    ev = MeterEvidence(pzem_number=1, feature_frame=frame)
+    assert es.detect_pf(ev, 0.0, BASE_TS) is None
+    assert analyze_meter(ev, 0.0, BASE_TS) == []
+    assert generate_recommendations({1: ev}) == []
+
+
+def test_detect_pf_still_fires_on_genuine_low_pf():
+    # Genuine poor PF on a loaded meter must still be reported, at the same
+    # priorities as before the nil-load guard was added.
+    med = MeterEvidence(1, feature_frame=make_frame(pf=0.85))
+    crit = MeterEvidence(1, feature_frame=make_frame(pf=0.70))
+    med_r = next(x for x in analyze_meter(med, 0, BASE_TS)
+                 if x.recommendation_type == "IMPROVE_POWER_FACTOR")
+    crit_r = next(x for x in analyze_meter(crit, 0, BASE_TS)
+                  if x.recommendation_type == "IMPROVE_POWER_FACTOR")
+    assert med_r.priority == "MEDIUM"
+    assert crit_r.priority == "HIGH"
+    # threshold itself is unchanged
+    assert es.PF_POOR_THRESHOLD == 0.90
+    assert es.PF_CRITICAL_THRESHOLD == 0.80
 
 
 # ---------------------------------------------------------------------------
@@ -443,3 +513,174 @@ def test_compute_anchor_uses_latest_data():
     b = MeterEvidence(2, feature_frame=make_frame())
     anchor = compute_anchor({1: a, 2: b})
     assert anchor == BASE_TS + (4 * 288 - 1) * 300
+
+
+# ---------------------------------------------------------------------------
+# 18. Stage 11 records the "ran, found nothing" state, not silence
+#
+# The /ai/energy_saving node must exist with status NO_RECOMMENDATION whenever
+# the pipeline legitimately finds nothing, so the dashboard/API can tell
+# "pipeline ran, no recommendation" apart from "pipeline never ran".
+# ---------------------------------------------------------------------------
+
+def test_stage11_persists_no_recommendation_record(fake_firebase):
+    # Nil-load fleet: the only thing that could have fired is the PF=0 false
+    # positive, which is now guarded, so this is a genuine no-recommendation run.
+    meters = {n: MeterEvidence(n, feature_frame=_nil_load_frame())
+              for n in range(1, 4)}
+    res = run_stage_11_pipeline(meters, rate=5.0, force=True)
+    anchor = res["anchor_timestamp"]
+
+    assert res["recommendations"] == []
+    assert res["persist"]["written"] is True
+
+    payload = fake_firebase[f"ai/energy_saving/{anchor}"]
+    assert payload["status"] == "NO_RECOMMENDATION"
+    assert payload["recommendation_count"] == 0
+    assert payload["recommendations"] == []
+    assert payload["timestamp"] == anchor
+    # the record must still name where it came from
+    assert payload["source_stages"]
+
+    # an empty fleet must also leave a truthful record behind
+    res_empty = run_stage_11_pipeline({}, rate=0.0, force=True,
+                                     anchor_ts=1_700_000_001)
+    assert res_empty["recommendations"] == []
+    empty_payload = fake_firebase["ai/energy_saving/1700000001"]
+    assert empty_payload["status"] == "NO_RECOMMENDATION"
+    assert empty_payload["recommendation_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 19. Recurring-window detection needs a dense-enough series
+#
+# _recurring_high_window bins the day into 30-minute slots and compares per-bin
+# medians. It refuses to claim a window when there are too few samples overall
+# (fewer than MIN_EVIDENCE_SAMPLES), when the series has no positive level, or
+# when the above-ratio bins hold fewer than MIN_SAMPLES_PER_BIN samples. The
+# last one matters because a bin with a single reading yields that reading as
+# its "median", which fabricates a recurring window on sparse/bursty data.
+# ---------------------------------------------------------------------------
+
+def _bin_counts(frame, col="power"):
+    ts = pd.to_datetime(frame["timestamp"], unit="s", utc=True)
+    hod = ts.dt.hour * 60 + ts.dt.minute
+    return frame.groupby((hod // es.BIN_MINUTES).astype(int))[col].size()
+
+
+def test_recurring_window_requires_dense_bins():
+    # Too few samples overall -> no window, no SHIFT_NON_CRITICAL_LOAD.
+    sparse = make_frame(days=5, n_per_day=3,
+                        power_profile=lambda t: 900.0 if t < 30 else 40.0)
+    assert len(sparse) == 15 < es.MIN_EVIDENCE_SAMPLES
+    assert es._recurring_high_window(sparse, "power") is None
+    assert es.detect_recurring_peak(
+        MeterEvidence(1, feature_frame=sparse), 0.0, BASE_TS) is None
+
+    # All-zero / nil-load series has no meaningful level to recur above.
+    flat_zero = make_frame(power_profile=lambda t: 0.0, pf=0.0, base_current=0.0)
+    assert es._recurring_high_window(flat_zero, "power") is None
+
+    # A genuinely dense series with a real recurring window must still fire,
+    # otherwise this test would be passing for the wrong reason.
+    def prof(t):
+        return 800.0 if 1080 <= t < 1260 else 100.0
+    dense = make_frame(days=4, power_profile=prof)
+    assert es._recurring_high_window(dense, "power") is not None
+    assert es.detect_recurring_peak(
+        MeterEvidence(1, feature_frame=dense), 0.0, BASE_TS) is not None
+
+
+def _sparse_bursty_frame(rows=105, days=30, n_spikes=30, spike_w=900.0, base_w=30.0):
+    """The audited failure shape: a 30-day window holding only `rows` readings,
+    so the bursts land in half-hour bins that each hold a SINGLE sample. Every
+    spike sits in its own distinct bin (one per day), and the low-power filler
+    is concentrated in separate bins, so no bin ever shows a recurring pattern.
+    """
+    rows_out = []
+    for i in range(n_spikes):                       # bins 8..37, one sample each
+        rows_out.append((BASE_TS + i * 86400 + (8 + i) * 30 * 60, spike_w))
+    for i in range(rows - n_spikes):                # bins 4..6, low power
+        d = i % days
+        rows_out.append((BASE_TS + d * 86400 + (4 + (i // days)) * 30 * 60, base_w))
+    return pd.DataFrame(sorted(rows_out), columns=["timestamp", "power"])
+
+
+def test_recurring_window_rejects_sparse_bursty_single_sample_bins():
+    frame = _sparse_bursty_frame()
+    assert len(frame) == 105
+    assert len(frame) >= es.MIN_EVIDENCE_SAMPLES  # the total-sample gate PASSES
+
+    counts = _bin_counts(frame)
+    # the failing premise: the above-ratio (spike) bins hold only one reading
+    assert counts.min() >= 1
+    spike_bins = frame.loc[frame["power"] > 500.0, "timestamp"]
+    spike_ts = pd.to_datetime(spike_bins, unit="s", utc=True)
+    spike_bin_ids = ((spike_ts.dt.hour * 60 + spike_ts.dt.minute) // es.BIN_MINUTES)
+    for b in spike_bin_ids:
+        assert counts[b] == 1, f"bin {b} should hold a single sample"
+
+    # single-sample bins are not a recurring pattern
+    assert es._recurring_high_window(frame, "power") is None
+    rec = es.detect_recurring_peak(
+        MeterEvidence(1, feature_frame=frame), 0.0, BASE_TS)
+    assert rec is None, f"sparse bursty data fired: {rec}"
+
+    types = {r.recommendation_type for r in
+             analyze_meter(MeterEvidence(1, feature_frame=frame), 0.0, BASE_TS)}
+    assert "SHIFT_NON_CRITICAL_LOAD" not in types
+
+
+def test_recurring_window_preserved_for_dense_repeated_half_hour():
+    # A genuine repeated half-hour window: every day 18:00-19:00 is high at a
+    # 5-min cadence, so the 18:00 bin holds many samples. Must still fire.
+    def prof(t):
+        return 800.0 if 1080 <= t < 1140 else 60.0
+    frame = make_frame(days=4, power_profile=prof)
+    counts = _bin_counts(frame)
+    assert counts.max() >= es.MIN_SAMPLES_PER_BIN
+
+    win = es._recurring_high_window(frame, "power")
+    assert win is not None
+    assert win["peak_median"] == 800.0
+    assert win["overall_median"] < win["peak_median"]
+
+    rec = es.detect_recurring_peak(
+        MeterEvidence(1, feature_frame=frame), 0.0, BASE_TS)
+    assert rec is not None
+    assert rec.recommendation_type == "SHIFT_NON_CRITICAL_LOAD"
+    # unchanged by this fix: 800 W is 4x the 200 W typical -> HIGH
+    assert rec.priority == "HIGH"
+
+
+def test_recurring_window_min_samples_per_bin_boundary():
+    """Boundary of MIN_SAMPLES_PER_BIN: a bin holding exactly the minimum
+    number of samples still yields a window; one fewer yields None."""
+    assert es.MIN_SAMPLES_PER_BIN == 2
+
+    def frame_with_bin_samples(n_in_peak_bin, days=30):
+        # exactly n_in_peak_bin readings in bin 36 (18:00) across the WHOLE window
+        rows = []
+        for i in range(n_in_peak_bin):
+            rows.append((BASE_TS + i * 86400 + 36 * 30 * 60, 800.0))
+        # low-power filler in other bins so the total clears MIN_EVIDENCE_SAMPLES
+        for i in range(days):
+            for k in range(6):
+                rows.append((BASE_TS + i * 86400 + (4 + k) * 30 * 60, 60.0))
+        return pd.DataFrame(sorted(rows), columns=["timestamp", "power"])
+
+    # exactly MIN_SAMPLES_PER_BIN samples in the peak bin -> accepted
+    at_min = frame_with_bin_samples(es.MIN_SAMPLES_PER_BIN)
+    c = _bin_counts(at_min)
+    ts = pd.to_datetime(at_min["timestamp"], unit="s", utc=True)
+    peak_bin = ((ts.dt.hour * 60 + ts.dt.minute) // es.BIN_MINUTES)[at_min["power"] > 500.0].iloc[0]
+    assert c[peak_bin] == es.MIN_SAMPLES_PER_BIN
+    assert es._recurring_high_window(at_min, "power") is not None
+
+    # one fewer -> the same single-sample spike is rejected
+    below = frame_with_bin_samples(es.MIN_SAMPLES_PER_BIN - 1)
+    c2 = _bin_counts(below)
+    assert c2[peak_bin] == es.MIN_SAMPLES_PER_BIN - 1
+    assert es._recurring_high_window(below, "power") is None
+    assert es.detect_recurring_peak(
+        MeterEvidence(1, feature_frame=below), 0.0, BASE_TS) is None

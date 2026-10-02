@@ -80,6 +80,11 @@ RECURRING_PEAK_RATIO = 1.5         # bin median vs overall median
 RECURRING_PEAK_MIN_W = 50.0        # absolute floor for the window
 FORECAST_HIGH_RATIO = 1.5
 BIN_MINUTES = 30
+# A bin median is only evidence of a RECURRING time-of-day pattern if the bin
+# actually holds more than one reading. On sparse/bursty data a bin can hold a
+# single sample, and that lone reading's "median" fabricates a window that never
+# actually recurs. A pattern needs at least MIN_SAMPLES_PER_BIN samples/bin.
+MIN_SAMPLES_PER_BIN = 2
 
 # Stage 7 peak above baseline worth acting on
 PEAK_REDUCE_ABSOLUTE_W = 500.0
@@ -186,10 +191,14 @@ def _recurring_high_window(frame: pd.DataFrame, power_col: str = "power",
     hod = ts.dt.hour * 60 + ts.dt.minute
     bins = (hod // BIN_MINUTES).astype(int)
     grp = df.groupby(bins)[power_col].median()
+    counts = df.groupby(bins)[power_col].size()
     overall = float(df[power_col].median())
     if overall <= 0:
         return None
     mask = grp > ratio * overall
+    # Drop bins that do not hold enough samples to demonstrate recurrence; a
+    # 0-1 sample bin's median is just that single reading, not a pattern.
+    mask &= counts >= MIN_SAMPLES_PER_BIN
     if not mask.any():
         return None
     cand = grp[mask]
@@ -267,7 +276,11 @@ def detect_pf(ev: MeterEvidence, rate: float, ts: int) -> Optional[Recommendatio
     if len(pf) < MIN_EVIDENCE_SAMPLES:
         return None
     med = float(pf.median())
-    if not np.isfinite(med) or med >= PF_POOR_THRESHOLD:
+    # A PZEM reports pf == 0 exactly when no current is flowing (pf == 0
+    # <=> power == 0 on every live row measured), so a median of 0 means the
+    # circuit was nil-load, not that its power factor was poor. Mirrors the
+    # same `med <= 0` guard detect_high_power() already applies.
+    if not np.isfinite(med) or med <= 0 or med >= PF_POOR_THRESHOLD:
         return None
     priority = "HIGH" if med < PF_CRITICAL_THRESHOLD else "MEDIUM"
     return Recommendation(

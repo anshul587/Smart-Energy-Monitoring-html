@@ -496,3 +496,31 @@ class Scheduler:
         logger.info("[scheduler] shutting down; releasing locks")
         self.state.clear_locks(self._pid)
         logger.info("[scheduler] shutdown complete")
+
+
+# ---------------------------------------------------------------------------
+# Executable entry point — `python -m ai.scheduler`
+#
+# The scheduler used to have no entry point at all, so nothing could start it
+# and the whole of Stages 1-11 (including the Stage 11 energy-saving write to
+# /ai/energy_saving) never ran in production. This only wires up the existing
+# Scheduler/run_forever; the pipeline itself is untouched.
+# ---------------------------------------------------------------------------
+
+SCHEDULER_POLL_SECONDS = 60
+
+
+def main() -> None:
+    """Configure logging and run the tick loop until SIGINT/SIGTERM."""
+    config = get_scheduler_config()
+    logging.basicConfig(
+        level=getattr(logging, config.log_level, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logger.info("[scheduler] entry point: enabled=%s interval=%ds poll=%ds",
+                config.enabled, config.ai_interval_seconds, SCHEDULER_POLL_SECONDS)
+    Scheduler(config=config).run_forever(poll_seconds=SCHEDULER_POLL_SECONDS)
+
+
+if __name__ == "__main__":
+    main()
