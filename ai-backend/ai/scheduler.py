@@ -510,16 +510,30 @@ class Scheduler:
 SCHEDULER_POLL_SECONDS = 60
 
 
-def main() -> None:
+def main(once: bool = False) -> None:
     """Configure logging and run the tick loop until SIGINT/SIGTERM."""
+    import sys
+
+    # Support command-line flag --once for one-shot execution
+    if len(sys.argv) > 1 and sys.argv[1] == "--once":
+        once = True
+
     config = get_scheduler_config()
     logging.basicConfig(
         level=getattr(logging, config.log_level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logger.info("[scheduler] entry point: enabled=%s interval=%ds poll=%ds",
-                config.enabled, config.ai_interval_seconds, SCHEDULER_POLL_SECONDS)
-    Scheduler(config=config).run_forever(poll_seconds=SCHEDULER_POLL_SECONDS)
+    logger.info("[scheduler] entry point: enabled=%s interval=%ds poll=%ds once=%s",
+                config.enabled, config.ai_interval_seconds, SCHEDULER_POLL_SECONDS, once)
+
+    sched = Scheduler(config=config)
+    if once:
+        sched.tick()
+        sched._shutdown()
+        if sched.state.job("ai_processing").status == JOB_FAILED:
+            raise SystemExit(1)
+        return
+    sched.run_forever(poll_seconds=SCHEDULER_POLL_SECONDS)
 
 
 if __name__ == "__main__":
