@@ -23,6 +23,7 @@ jobs:
       SCHEDULER_ENABLED: "true"
       SCHEDULER_LOG_LEVEL: INFO
       FIREBASE_DATABASE_URL: "https://smart-energy-monitoring-5a2a4-default-rtdb.asia-southeast1.firebasedatabase.app"
+      FIREBASE_SERVICE_ACCOUNT_PATH: ./secrets/firebase-service-account.json
 
     steps:
       - name: Checkout
@@ -44,8 +45,8 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
-          mkdir -p ai-backend/secrets
-          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > ai-backend/secrets/firebase-service-account.json
+          mkdir -p secrets
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON" > ./secrets/firebase-service-account.json
 
       - name: Cache AI cache
         uses: actions/cache@v4
