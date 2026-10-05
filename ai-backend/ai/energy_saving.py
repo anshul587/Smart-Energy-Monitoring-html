@@ -627,9 +627,13 @@ def _init_firebase():
     if not Path(cred_path).exists():
         raise RuntimeError(f"Service account file not found at {cred_path}.")
     cred = credentials.Certificate(cred_path)
-    _firebase_app = firebase_admin.initialize_app(
-        cred, {"databaseURL": settings.firebase_database_url}
-    )
+    try:
+        _firebase_app = firebase_admin.initialize_app(
+            cred, {"databaseURL": settings.firebase_database_url}
+        )
+    except ValueError:
+        _firebase_app = firebase_admin.get_app()
+    logger.info("Firebase Admin SDK initialized against %s", settings.firebase_database_url)
     return _firebase_app
 
 

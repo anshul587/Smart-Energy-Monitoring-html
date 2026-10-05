@@ -42,6 +42,8 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 
+from .mapping import get_load_location, meter_label, meter_label_with_id
+
 logger = logging.getLogger("ai.report_generator")
 
 UTC = datetime.timezone.utc
@@ -451,7 +453,7 @@ def _build_chart_data(data: ReportInput, start_ts: int, end_ts: int, kind: str) 
     for n in range(1, data.pzem_count + 1):
         st = _pzem_stats(data.frames.get(n), start_ts, end_ts)
         if st and st["energy_kwh"] is not None:
-            pzem_energy.append((f"PZEM {n}", st["energy_kwh"]))
+            pzem_energy.append((meter_label(n), st["energy_kwh"]))
     if pzem_energy:
         pzem_energy.sort(key=lambda x: -x[1])
         charts["pzem_energy"] = {
@@ -478,7 +480,7 @@ def _build_chart_data(data: ReportInput, start_ts: int, end_ts: int, kind: str) 
         if not active:
             active = list(range(1, min(data.pzem_count + 1, 6)))
         charts["event_summary"] = {
-            "labels": [f"PZEM {n}" for n in active],
+            "labels": [meter_label(n) for n in active],
             "series": {
                 "Anomalies": [pzem_a[n] for n in active],
                 "Faults": [pzem_f[n] for n in active],
@@ -556,7 +558,8 @@ class _PDF:
         self._space(14)
         self.y -= 11
         head = "  ".join(_PDF._s(h).ljust(w)[:w] for h, w in zip(headers, widths))
-        self.cur.append(f"BT /F2 9 Tf {self.M} {self.y:.1f} Td ({head.replace('(', '\\(').replace(')', '\\)')}) Tj ET")
+        head_esc = head.replace('(', '\\(').replace(')', '\\)')
+        self.cur.append(f"BT /F2 9 Tf {self.M} {self.y:.1f} Td ({head_esc}) Tj ET")
         self.cur.append(f"BT /F1 9 Tf {self.M} {self.y-12:.1f} Td ( ) Tj ET")
         for row in rows:
             cells = [_PDF._s(str(c))[:w] for c, w in zip(row, widths)]
@@ -836,18 +839,21 @@ def render_pdf(report: dict, path: str) -> None:
 
     # ---- Meter-wise Energy Summary ----
     pdf.heading("Meter-wise Energy Consumption", size=14)
-    headers = ["Meter", "Energy Used (kWh)", "Peak Power (kW)", "Anomalies", "Faults", "Maintenance Risk", "Forecast", "Bill Status"]
-    widths = [12, 18, 18, 12, 10, 18, 12, 12]
+    headers = ["Load", "PZEM ID", "Location", "Energy Used (kWh)", "Peak Power (kW)", "Anomalies", "Faults", "Maintenance Risk", "Forecast", "Bill Status"]
+    widths = [12, 8, 12, 14, 13, 9, 8, 13, 10, 10]
     rows = []
     for r in report["pzem_rows"]:
+        n = r['pzem']
+        name = meter_label(n)
+        loc = get_load_location(f"pzem_{n}")
         if r["available"]:
             peak_kw = _fmt(r['peak_power_w'] / 1000.0) if r['peak_power_w'] is not None else "\u2014"
             risk = _risk_label(r['risk_level']) if r['risk_level'] else "\u2014"
-            rows.append([f"PZEM {r['pzem']}", _fmt(r['energy_kwh']), peak_kw,
+            rows.append([name, f"PZEM-{n}", loc, _fmt(r['energy_kwh']), peak_kw,
                          str(r['anomalies']), str(r['faults']), risk,
                          str(r['forecast']['status']), str(r['bill']['status'])])
         else:
-            rows.append([f"PZEM {r['pzem']}", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"])
+            rows.append([name, f"PZEM-{n}", loc, "n/a", "n/a", "n/a", "n/a", "n/a", "n/a", "n/a"])
     pdf.table(headers, rows, widths)
     pdf.spacer(8)
 
@@ -866,8 +872,9 @@ def render_pdf(report: dict, path: str) -> None:
         if sys.get("_baseline_power_w") is not None:
             baseline_w = sys["_baseline_power_w"]
         above_baseline = (sys['peak_power_w'] - baseline_w) if baseline_w else None
-        pdf.text(f"Peak above baseline: {_fmt(above_baseline / 1000.0) if above_baseline is not None else '\u2014'} kW", size=10)
-        pdf.text(f"Baseline (median) power: {_fmt(baseline_w / 1000.0) if baseline_w else '\u2014'} kW", size=10)
+        dash = "\u2014"
+        pdf.text(f"Peak above baseline: {_fmt(above_baseline / 1000.0) if above_baseline is not None else dash} kW", size=10)
+        pdf.text(f"Baseline (median) power: {_fmt(baseline_w / 1000.0) if baseline_w else dash} kW", size=10)
     else:
         pdf.text("No peak demand data available for this period.", size=10)
     pdf.text("System peak is computed from timestamp-aligned simultaneous PZEM readings (Stage 3.1 aggregation).", size=9)
@@ -882,8 +889,11 @@ def render_pdf(report: dict, path: str) -> None:
             ft = _fault_type_label(a.get('type', '') or '')
             sev = SEVERITY_LABELS.get(a.get('severity', ''), a.get('severity', ''))
             t = datetime.datetime.fromtimestamp(a["timestamp"], UTC).strftime('%d %B %Y') if a["timestamp"] else "\u2014"
-            who = f"PZEM {a['pzem']}" if a['pzem'] else "SYSTEM"
+            who = meter_label_with_id(a['pzem']) if a['pzem'] else "SYSTEM"
             pdf.text(f"{who} \u2013 {ft}", size=10, bold=True)
+            if a['pzem']:
+                loc = get_load_location(f"pzem_{a['pzem']}")
+                pdf.text(f"Location: {loc}", size=9, indent=6)
             pdf.text(f"Date: {t}", size=9, indent=6)
             pdf.text(f"Status: {sev}", size=9, indent=6)
     else:
@@ -901,9 +911,9 @@ def render_pdf(report: dict, path: str) -> None:
         high_meters = [r['pzem'] for r in report["pzem_rows"] if r.get("risk_level") == "HIGH"]
         watch_meters = [r['pzem'] for r in report["pzem_rows"] if r.get("risk_level") == "WATCH"]
         if high_meters:
-            pdf.text(f"High-risk meters: {', '.join(f'PZEM {m}' for m in high_meters)}", size=9, indent=6)
+            pdf.text(f"High-risk meters: {', '.join(meter_label_with_id(m) for m in high_meters)}", size=9, indent=6)
         if watch_meters:
-            pdf.text(f"Watch meters: {', '.join(f'PZEM {m}' for m in watch_meters)}", size=9, indent=6)
+            pdf.text(f"Watch meters: {', '.join(meter_label_with_id(m) for m in watch_meters)}", size=9, indent=6)
     else:
         pdf.text("No maintenance risk data available for this period.", size=10)
     pdf.spacer(8)
@@ -913,8 +923,11 @@ def render_pdf(report: dict, path: str) -> None:
     if ai['recommendations']:
         for r in ai['recommendations']:
             label = _recommendation_label(r['recommendation_type'])
-            who = "SYSTEM" if r['pzem_number'] is None else f"PZEM {r['pzem_number']}"
+            who = "SYSTEM" if r['pzem_number'] is None else meter_label_with_id(r['pzem_number'])
             pdf.text(f"{who} \u2013 {label}", size=11, bold=True)
+            if r['pzem_number'] is not None:
+                loc = get_load_location(f"pzem_{r['pzem_number']}")
+                pdf.text(f"Location: {loc}", size=9, indent=6)
             pdf.text(f"Priority: {PRIORITY_LABELS.get(r['priority'], r['priority'])}", size=9, indent=6)
             pdf.text(f"Observation: {r['reason']}", size=9, indent=6)
             if r['potential_saving_kwh'] is not None:
@@ -953,7 +966,8 @@ def render_pdf(report: dict, path: str) -> None:
         fc = ai['forecast']
         if fc.get('status') == 'FORECAST':
             pdf.text(f"Forecast status: {fc['status']}", size=10)
-            pdf.text(f"Confidence: {fc.get('confidence', '\u2014')}", size=10)
+            conf = fc.get('confidence', "\u2014")
+            pdf.text(f"Confidence: {conf}", size=10)
             if fc.get('forecast_energy_kwh') is not None:
                 pdf.text(f"Forecast energy: {_fmt(fc['forecast_energy_kwh'])} kWh", size=10)
         else:
@@ -1014,11 +1028,13 @@ def render_pdf(report: dict, path: str) -> None:
     pdf.text("Internal recommendation codes (traceability):", size=9)
     for r in ai['recommendations']:
         code = r['recommendation_type']
-        who = "SYSTEM" if r['pzem_number'] is None else f"PZEM {r['pzem_number']}"
+        who = "SYSTEM" if r['pzem_number'] is None else meter_label_with_id(r['pzem_number'])
         pdf.text(f"  {code} - {who} - {PRIORITY_LABELS.get(r['priority'], r['priority'])}", size=8, indent=6)
     pdf.text("Fault types (internal codes):", size=9)
     for a in report["alerts"]:
-        pdf.text(f"  {a.get('type', '\u2014')} - PZEM {a['pzem']} - {a.get('severity', '\u2014')}", size=8, indent=6)
+        a_type = a.get('type', "\u2014")
+        a_sev = a.get('severity', "\u2014")
+        pdf.text(f"  {a_type} - {meter_label_with_id(a['pzem'])} - {a_sev}", size=8, indent=6)
     pdf.text("Report generated by Smart Energy Monitoring System.", size=8)
     pdf.save(path)
 

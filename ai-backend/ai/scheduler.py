@@ -211,8 +211,7 @@ def run_ai_pipeline(settings, rate: Optional[float] = None) -> dict:
 
     _safe_stage(log, "persist_anomalies_faults",
                 lambda: persist_ai_results.run_stage_5_pipeline(
-                    preprocess_results=pre, anomaly_results=anomaly_results,
-                    fault_results=fault_results))
+                    preprocess_results=pre, anomaly_results=anomaly_results))
 
     peak_pair = _safe_stage(
         log, "peak_detection",

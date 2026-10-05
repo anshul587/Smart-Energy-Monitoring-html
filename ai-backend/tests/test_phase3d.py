@@ -710,13 +710,40 @@ class TestPhase3DTimestampValidation:
         # Verify _fmt_ts_s produces correct output
         assert _fmt_ts_s(1788998400) == "2026-09-10 00:00 UTC"
 
-    def test_max_timestamp_uses_milliseconds(self):
-        """max_timestamp (milliseconds) must still use _fmt_ts, not _fmt_ts_s."""
+    def test_max_timestamp_uses_seconds(self):
+        """max_timestamp is Unix SECONDS, so it must render with _fmt_ts_s.
+
+        electrical_analysis parses history with pd.to_datetime(unit="s") and
+        copies that column straight into min/max_timestamp, and the same
+        analysis object reports requested_start/requested_end in seconds. Treating
+        it as milliseconds divided 2026 by 1000 and rendered 1970-01-21.
+        """
         from ai.ask_bob import _fmt_ts, _fmt_ts_s
-        # max_timestamp is in milliseconds
+        # max_timestamp in seconds (2026-09-10 11:33:20 UTC)
+        assert _fmt_ts_s(1789040000) == "2026-09-10 11:33 UTC"
+        # The millisecond formatter would corrupt it -> the original 1970 bug.
+        assert _fmt_ts(1789040000) == "1970-01-21 16:57 UTC"
+        # A genuine millisecond value still renders correctly via _fmt_ts.
         assert _fmt_ts(1789040000000) == "2026-09-10 11:33 UTC"
-        # _fmt_ts_s would produce wrong output for milliseconds
-        assert _fmt_ts_s(1789040000000) != "2026-09-10 11:33 UTC"
+
+    def test_render_historical_peak_timestamp_not_1970(self):
+        """End-to-end: a seconds peak timestamp must not render as 1970."""
+        from ai.ask_bob import _compose_energy
+        hist = {
+            "status": "OK",
+            "pzem_number": 1,
+            "requested_start": 1788998400,
+            "requested_end": 1789084799,
+            "available_days": 1.0,
+            "power": {
+                "count": 5, "minimum": 10.0, "maximum": 900.0, "average": 400.0,
+                "median": 400.0, "std_dev": 5.0,
+                "min_timestamp": 1789040000, "max_timestamp": 1789040000,
+            },
+        }
+        resp = _compose_energy("PZEM-1 ka peak power kab tha?", {"get_historical_analysis": hist}, None)
+        assert "2026-09-10 11:33 UTC" in resp
+        assert "1970" not in resp
 
     def test_requested_end_seconds_correct(self):
         """requested_end=1789084799 (seconds) must render as 2026-09-10 23:59 UTC."""

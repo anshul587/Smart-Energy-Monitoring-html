@@ -8,6 +8,7 @@ is forced off unless a specific test needs it.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -861,3 +862,228 @@ def test_diagnostic_no_invented_confidence(no_key):
     no_key.setattr(bob_tools, "run_tool", fake_run)
     r = ask_bob.ask_bob("PZEM-1 mein kya problem hai?")
     assert "0.5" in r["answer"] or "high confidence" not in r["answer"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Future bill questions are PREDICTIONS, not history.
+# "kal" is ambiguous: "kal kitna bill aa sakta hai" -> forecast/bill,
+# "kal kitna bill aaya tha" -> historical.
+# ---------------------------------------------------------------------------
+
+FUTURE_BILL_QUESTIONS = [
+    "kal kitna bill aa sakta hai?",
+    "kal ka bill kitna hoga?",
+    "tomorrow bill kitna hoga?",
+    "tomorrow electricity bill",
+    "kal ka estimated bill",
+    "next day bill estimate",
+    "agle din ka bill",
+]
+
+
+@pytest.mark.parametrize("q", FUTURE_BILL_QUESTIONS)
+def test_future_bill_routes_to_prediction_not_history(q, fake_data):
+    """Future bill wording must use forecast + bill prediction, never history."""
+    ask_bob.ask_bob(q)
+    names = {c[0] for c in fake_data}
+    assert "get_historical_analysis" not in names
+    assert "get_bill_prediction" in names
+    assert "get_forecast" in names
+
+
+@pytest.mark.parametrize("q", FUTURE_BILL_QUESTIONS)
+def test_future_bill_never_says_historical_unavailable(q, fake_data):
+    """Answer must not claim historical data is missing for a future question."""
+    r = ask_bob.ask_bob(q)
+    assert "historical" not in r["answer"].lower()
+    assert "312.5" in r["answer"] or "bill prediction" in r["answer"].lower()
+
+
+def test_future_bill_uses_24h_horizon(fake_data):
+    """A 'kal'/tomorrow bill question asks for the 24h forecast."""
+    ask_bob.ask_bob("kal kitna bill aa sakta hai?")
+    horizons = [p.get("horizon") for n, p in fake_data if n == "get_forecast"]
+    assert horizons == ["24h"]
+
+
+def test_future_bill_insufficient_data_message(no_key):
+    """Missing prediction data is described as unavailable, not as history."""
+    def fake_run(name, **params):
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("kal kitna bill aa sakta hai?")
+    low = r["answer"].lower()
+    assert "historical" not in low
+    assert "don't have enough" in low or "bill prediction" in low
+
+
+
+HISTORICAL_BILL_QUESTIONS = [
+    "kal kitna bill aaya tha?",
+    "yesterday bill kitna tha?",
+    "10 September ka bill kitna tha?",
+    "pichhle mahine ka bill",
+]
+
+
+@pytest.mark.parametrize("q", HISTORICAL_BILL_QUESTIONS)
+def test_past_bill_still_routes_to_history(q, fake_data):
+    """Past-tense bill questions must keep historical routing."""
+    ask_bob.ask_bob(q)
+    names = {c[0] for c in fake_data}
+    assert "get_historical_analysis" in names
+    assert "get_forecast" not in names
+
+
+# ---------------------------------------------------------------------------
+# Time-intent routing: future vs past vs live.
+# "kal" alone is ambiguous, so intent comes from the surrounding wording.
+# ---------------------------------------------------------------------------
+
+LIVE_TOOLS = ("get_meter", "get_meters", "get_system_summary")
+
+GENERIC_AI_LIMITATION_PHRASES = (
+    "knowledge cutoff", "knowledge cut-off", "training data", "up to 2025",
+    "as an ai", "real-time data", "real time data", "cannot access future",
+    "can't access future", "unable to access future", "i cannot provide future",
+    "i can't provide future", "no future data is available",
+)
+
+FUTURE_QUESTIONS = [
+    "kal kitna bill aa sakta he",
+    "kal power kitni ho sakti hai",
+    "tomorrow electricity consumption kitni hogi",
+    "future data nhi he",
+    "agle din kitna bill hoga",
+    "kal kitna bill aa sakta he?",
+    "parso ka kitna bill aayega",
+    "aaj raat kitna kharcha hoga",
+]
+
+PAST_QUESTIONS = [
+    "kal kitna bill aaya tha",
+    "kal power kitni thi",
+    "kal kya hua tha",
+    "pichhle 7 din ka bill",
+    "yesterday kitna bill aaya tha",
+    "pichhle 7 din ka power kya tha",
+    "kal consumption kitni thi",
+]
+
+LIVE_QUESTIONS = [
+    "abhi power kitni hai",
+    "PZEM-1 ka current abhi kitna hai",
+    "abhi kitna power chal raha hai",
+    "PZEM-3 ka abhi power kitna hai?",
+]
+
+
+def _names(calls):
+    return {c[0] for c in calls}
+
+
+def _assert_no_generic_ai_wording(answer):
+    low = answer.lower()
+    for phrase in GENERIC_AI_LIMITATION_PHRASES:
+        assert phrase not in low, f"generic AI-limitation phrase {phrase!r} in: {answer!r}"
+
+
+@pytest.mark.parametrize("q", FUTURE_QUESTIONS)
+def test_future_routes_to_forecast_only(q, fake_data):
+    """Future wording picks forecast/bill tools, never history or live readings."""
+    r = ask_bob.ask_bob(q)
+    names = _names(fake_data)
+    assert r["intent"] == "energy"
+    assert "get_forecast" in names
+    assert "get_historical_analysis" not in names
+    assert not _names(fake_data) & set(LIVE_TOOLS)
+    _assert_no_generic_ai_wording(r["answer"])
+
+
+@pytest.mark.parametrize("q", FUTURE_QUESTIONS)
+def test_future_power_no_fabricated_values(q, fake_data):
+    """Future answers may only quote measured values that exist in forecast/bill data."""
+    r = ask_bob.ask_bob(q)
+    allowed = {f["forecast_24h"] for f in FORECAST} | {f["forecast_7d"] for f in FORECAST} \
+        | {b["estimated_bill"] for b in BILL}
+    # Only numbers carrying a unit/currency are claims; horizon labels and
+    # timestamps are not.
+    claims = re.findall(r"(\d+(?:\.\d+)?)\s*(?:W\b|kWh\b|₹)", r["answer"])
+    assert claims, "future answer quoted no verified value"
+    for num in claims:
+        assert any(abs(float(num) - a) < 0.01 for a in allowed), \
+            f"value {num} in future answer is not from forecast/bill data: {r['answer']!r}"
+
+
+@pytest.mark.parametrize("q", FUTURE_QUESTIONS)
+def test_future_answer_never_shows_live_meter_watts(q, fake_data):
+    """Live meter watts must not be presented as a future prediction."""
+    r = ask_bob.ask_bob(q)
+    for m in METERS:
+        if m["power"] is not None and m["online"]:
+            assert f"{m['power']} W" not in r["answer"]
+
+
+@pytest.mark.parametrize("q", PAST_QUESTIONS)
+def test_past_routes_to_historical_only(q, fake_data):
+    """Past wording picks historical tools, never forecast/bill prediction."""
+    r = ask_bob.ask_bob(q)
+    names = _names(fake_data)
+    assert r["intent"] == "energy"
+    assert "get_historical_analysis" in names
+    assert "get_forecast" not in names
+    assert "get_bill_prediction" not in names
+
+
+@pytest.mark.parametrize("q", LIVE_QUESTIONS)
+def test_live_routes_to_live_tools_only(q, fake_data):
+    """Right-now wording picks live tools, never history or forecast."""
+    r = ask_bob.ask_bob(q)
+    names = _names(fake_data)
+    assert r["intent"] == "energy"
+    assert names & set(LIVE_TOOLS)
+    assert "get_historical_analysis" not in names
+    assert "get_forecast" not in names
+
+
+def test_kal_is_not_automatically_historical(fake_data):
+    """'kal' + future wording is future; 'kal' + past wording is past."""
+    ask_bob.ask_bob("kal kitna bill aa sakta he")
+    assert "get_historical_analysis" not in _names(fake_data)
+    fake_data.clear()
+    ask_bob.ask_bob("kal kitna bill aaya tha")
+    assert "get_forecast" not in _names(fake_data)
+
+
+def test_future_data_question_is_not_casual(fake_data):
+    """'future data nhi he' must be answered from project data, not small talk."""
+    r = ask_bob.ask_bob("future data nhi he")
+    assert r["intent"] == "energy"
+    assert "get_forecast" in _names(fake_data)
+    assert "how can i help" not in r["answer"].lower()
+    _assert_no_generic_ai_wording(r["answer"])
+
+
+def test_future_insufficient_forecast_data_wording(no_key):
+    """Missing future data is reported in project terms, never as an AI limitation."""
+    def fake_run(name, **params):
+        return {}
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("kal kitna bill aa sakta he")
+    low = r["answer"].lower()
+    assert "insufficient" in low
+    assert "historical" not in low
+    _assert_no_generic_ai_wording(r["answer"])
+
+
+def test_future_forecast_record_without_numbers(no_key):
+    """A forecast record with no numeric values is reported as insufficient."""
+    def fake_run(name, **params):
+        if name == "get_forecast":
+            return [{"pzem_number": None, "status": "FORECAST",
+                     "forecast_24h": None, "forecast_7d": None}]
+        return []
+    no_key.setattr(bob_tools, "run_tool", fake_run)
+    r = ask_bob.ask_bob("kal power kitni ho sakti hai")
+    assert "insufficient" in r["answer"].lower()
+    _assert_no_generic_ai_wording(r["answer"])

@@ -102,6 +102,19 @@ _HISTORICAL_HINTS = re.compile(
     r"\d+\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|"
     r"10\s*september|10\s*sep|yesterday|kal|aaj)\b", re.I)
 
+# "kal"/"tomorrow" are AMBIGUOUS on their own: "kal kitna bill aa sakta hai"
+# asks for a PREDICTION, "kal kitna bill aaya tha" asks for history. So a
+# future marker only means future while the sentence carries no past-tense
+# marker. English past words (yesterday/last/previous) are past markers too,
+# which keeps every explicit historical question on the historical path.
+_FUTURE_HINTS = re.compile(
+    r"\b(tomorrow|tomorow|tommorow|tommorrow|next\s*day|next\s*24|agle\s*din|"
+    r"kal|aaj\s*raat|parso|upcoming|future|predicted|expected)\b", re.I)
+
+_PAST_HINTS = re.compile(
+    r"\b(thi|tha|hui|hua|aaya|aya|aayi|raha|rahi|pichhle|pichhla|pichle|"
+    r"last|previous|yesterday|used\s*to)\b", re.I)
+
 _FOLLOWUP_HINTS = re.compile(
     r"^(why|how|what|when|where|who|which|how much|how many|tell me more|more|how much)"
     r"|^(and|but|also|then|so)"
@@ -126,6 +139,12 @@ def _detect_intent(question: str, history: list) -> dict[str, bool]:
     energy = bool(_ENERGY_HINTS.search(q))
     if not energy:
         energy = bool(re.search(r"action\s*(lena|karna|kari|karna|chahiye)", q, re.I))
+    # A time-anchored question ("kal ...", "future data", "pichhle 7 din") is an
+    # energy-data question even without a sensor word. Without this it fell
+    # through to the general-chat layer, which answered with generic AI
+    # limitations ("knowledge cutoff", "no future data") instead of project data.
+    if not energy and (_FUTURE_HINTS.search(q) or _HISTORICAL_HINTS.search(q)):
+        energy = True
 
     # Follow-ups inherit energy/project context from history
     if is_followup and not (casual or project or energy):
@@ -157,6 +176,47 @@ def _last_mentioned_pzem(history: list) -> Optional[int]:
     return None
 
 
+def _llm_answer_text(resp: Any) -> str:
+    """Text of an LLM response, or '' when the provider returned no text block.
+
+    Providers may answer with an empty message, or (Claude, when thinking is on)
+    put a non-text block first. `content[0].text.strip()` then raised
+    AttributeError and the whole answer was thrown away even though a usable
+    text block was present. Empty text means "no answer", so the caller falls
+    back to the deterministic composer.
+    """
+    content = getattr(getattr(resp, "choices", [None])[0].message, "content", None) \
+        if getattr(resp, "choices", None) else getattr(resp, "content", None)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    return "".join(getattr(b, "text", "") or "" for b in content).strip()
+
+
+def _pzem_from_load_name(text: str) -> Optional[int]:
+    """Resolve a mapped LOAD NAME ("Fan 1") to its PZEM number.
+
+    Reads the central mapping (config/pzem_mapping) through ai.mapping — no
+    second mapping table. Placeholder names ("PZEM-3") are ignored so an
+    explicit PZEM query keeps its existing meaning, and an unknown load name
+    resolves to None rather than guessing a meter.
+    """
+    from .mapping import get_pzem_load_mapping
+
+    q = text.lower()
+    for key, entry in get_pzem_load_mapping().items():
+        name = str(entry.get("load_name", "")).strip()
+        if not name or name.upper().startswith("PZEM"):
+            continue
+        if re.search(rf"\b{re.escape(name.lower())}\b", q):
+            try:
+                return int(str(key).split("_")[-1])
+            except ValueError:
+                continue
+    return None
+
+
 def _pzem_from_text(text: str) -> Optional[int]:
     m = re.search(r"pzem[\s_-]*(\d+)", text, re.I)
     if m:
@@ -170,7 +230,9 @@ def _pzem_from_text(text: str) -> Optional[int]:
                   text, re.I)
     if m:
         return words.get(m.group(1).lower())
-    return None
+    # Last resort: a mapped load name ("Fan 1"). Additive layer only — every
+    # explicit PZEM query above keeps its existing meaning.
+    return _pzem_from_load_name(text)
 
 
 def _resolve_followup(question: str, history: list) -> str:
@@ -284,21 +346,33 @@ def _select_tools(question: str, history: list) -> list[tuple[str, dict]]:
 
     has = lambda *ws: any(w in q for w in ws)
 
-    want_historical = bool(date_range) or has(
+    # A future-facing question is history only if it also reads as past tense.
+    future_q = bool(_FUTURE_HINTS.search(q)) and not _PAST_HINTS.search(q)
+
+    want_historical = not future_q and (bool(date_range) or has(
         "last", "previous", "yesterday", "kal", "aaj", "this week",
         "last week", "previous week", "last month", "previous month",
+        "pichhle", "pichle", "pichhla",
         "10 september", "10 sep", "average power", "max power", "min power",
         "energy consumption", "consumed", "maximum current", "maximum power",
         "highest power", "lowest power", "daily", "hourly", "trend",
-    )
+    ))
+
+    # A question is historical, future, or live-right-now. Only the last one may
+    # pull live meter readings, so past and future stay strictly separated.
+    wants_live = not (want_historical or future_q)
 
     want_report = has("monthly report", "report")
     want_saving = has("save energy", "energy saving", "energy-saving", "recommend",
                       "reduce", "lower my bill", "lower the bill", "cut energy",
                       "save electricity", "save power")
-    want_bill = has("bill", "invoice")
+    want_bill = has("bill", "invoice") and not want_historical
     want_forecast = has("forecast", "tomorrow", "next 24", "next 7", "next seven",
                         "predicted usage", "future usage", "upcoming", "what will")
+    # Any clearly-future question is answered by the forecast stage, never by
+    # live readings (which describe right now, not tomorrow).
+    if future_q:
+        want_forecast = True
     want_peaks = has("peak", "surge", "spike", "highest load")
     want_faults = has("fault", "breakdown", "error", "failure", "tripped")
     want_anomalies = has("anomal", "unusual", "abnormal", "strange", "odd")
@@ -353,25 +427,31 @@ def _select_tools(question: str, history: list) -> list[tuple[str, dict]]:
     if want_bill:
         add("get_bill_prediction")
     if want_forecast:
-        horizon = ("24h" if has("tomorrow", "next 24", "24 hours", "24h")
+        horizon = ("24h" if has("tomorrow", "next 24", "24 hours", "24h",
+                                "kal", "next day", "agle din")
                    else "7d" if has("next 7", "next seven", "7 days", "7d", "week")
                    else "both")
         add("get_forecast", horizon=horizon)
-    if want_peaks and not want_historical:
+    if want_peaks and wants_live:
         add("get_peaks")
     if want_faults:
         add("get_faults")
         add("get_diagnostic_recommendations")
+        # Maintenance risk is the third piece of fault context. Only for
+        # live/recent questions, so a historical fault question never mixes in
+        # current maintenance state.
+        if wants_live:
+            add("get_maintenance")
     if want_anomalies:
         add("get_anomalies")
     if want_diagnostic:
         add("get_diagnostic_recommendations")
-        if pz is not None and not want_historical:
+        if pz is not None and wants_live:
             add("get_meter")
             add("get_faults")
             add("get_anomalies")
 
-    if reason_why and not want_historical and not want_diagnostic and not want_bill and not want_saving and not want_forecast:
+    if reason_why and wants_live and not want_diagnostic and not want_bill and not want_saving and not want_forecast:
         if want_power or compare or has("consum", "power", "load"):
             if pz is not None:
                 add("get_meter")
@@ -399,16 +479,16 @@ def _select_tools(question: str, history: list) -> list[tuple[str, dict]]:
                 add("get_system_summary")
                 add("get_diagnostic_recommendations")
 
-    if want_maint and not want_historical:
+    if want_maint and wants_live:
         add("get_maintenance")
-    if want_reading and pz is not None and not want_historical:
+    if want_reading and pz is not None and wants_live:
         add("get_meter")
-    if want_power and not want_historical:
+    if want_power and wants_live:
         if compare or pz is None:
             add("get_meters")
         elif pz is not None and not any(t == "get_meter" for t, _ in plan):
             add("get_meter")
-    if want_status and not want_historical:
+    if want_status and wants_live:
         add("get_system_summary")
 
     if not plan:
@@ -520,14 +600,14 @@ def _llm_general_conversation(question: str, history: list, api_key: str, provid
             user_msgs = [msg for msg in messages if msg.get("role") == "user"]
             combined = [sys_msg] + user_msgs if user_msgs else [sys_msg] + messages
             resp = client.chat.completions.create(model=model, max_tokens=400, messages=combined)  # type: ignore
-            answer = resp.choices[0].message.content.strip()
+            answer = _llm_answer_text(resp)
         else:
             # anthropic fallback
             import anthropic  # type: ignore
             client = anthropic.Anthropic(api_key=api_key)
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
             resp = client.messages.create(model=model, max_tokens=400, system=system, messages=messages)
-            answer = "".join(getattr(b, "text", "") for b in resp.content).strip()
+            answer = _llm_answer_text(resp)
         return answer or None
     except Exception as exc:  # noqa: BLE001
         logger.warning("Ask BOB LLM general conversation failed; using fallback: %s", exc)
@@ -633,6 +713,14 @@ def _project_response(question: str, k: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def _fmt_ts(ms: Any) -> str:
+    """Format a Unix-MILLISECOND timestamp.
+
+    Only for sources that legitimately supply milliseconds. Every record that
+    reaches BOB (ai_store / electrical_analysis / persist_ai_results, which also
+    uses the seconds value as the Firebase key) is Unix SECONDS, so those paths
+    must use _fmt_ts_s — feeding seconds here divided them by 1000 and rendered
+    2026 data as 1970-01-21.
+    """
     try:
         from datetime import datetime, timezone
         return datetime.fromtimestamp(int(ms) / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -641,12 +729,20 @@ def _fmt_ts(ms: Any) -> str:
 
 
 def _fmt_ts_s(sec: Any) -> str:
-    """Format a Unix-seconds timestamp into a human-readable date string."""
+    """Format a Unix-SECONDS timestamp (the unit of every BOB data source)."""
     try:
         from datetime import datetime, timezone
         return datetime.fromtimestamp(int(sec), tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     except Exception:
         return str(sec)
+
+
+# Missing future data is described in project terms. Never fall back to generic
+# AI-limitation wording (knowledge cutoff, "cannot access future data").
+_NO_FORECAST_DATA = (
+    "Available forecast data insufficient hai for that future period, so I can't give a "
+    "verified number. Run the AI pipeline to refresh forecast/bill prediction, then ask again."
+)
 
 
 def _render_system_summary(s: dict, question: str = "") -> Optional[str]:
@@ -704,6 +800,26 @@ def _render_meter(m: dict, question: str = "") -> str:
     return " ".join(parts)
 
 
+def _pz_label(n: Any) -> str:
+    """Display identity for a PZEM: keeps the immutable ID and adds the mapped
+    load name / location from the central mapping when one exists.
+
+    'PZEM 1 (Fan 1 - Classroom)' / 'PZEM 3' when nothing is mapped.
+    """
+    if n is None:
+        return "SYSTEM"
+    from .mapping import get_load_location, get_load_name, get_pzem_display_id
+
+    key = f"pzem_{int(n)}"
+    ident = get_pzem_display_id(key)
+    name = str(get_load_name(key) or "").strip()
+    loc = str(get_load_location(key) or "").strip()
+    if not name or name == ident:
+        return ident
+    extra = f" - {loc}" if loc and loc != "Unassigned" else ""
+    return f"{ident} ({name}{extra})"
+
+
 def _render_faults(records: list, question: str = "") -> str:
     if not records:
         return "There are no active faults recorded."
@@ -711,8 +827,10 @@ def _render_faults(records: list, question: str = "") -> str:
     for f in records[:5]:
         n = f.get("pzem_number")
         ft = f.get("fault_type") or "fault"
-        ts = _fmt_ts(f.get("timestamp"))
-        lines.append(f"- PZEM {n}: {ft} (at {ts})")
+        ts = _fmt_ts_s(f.get("timestamp"))
+        sev = f.get("severity")
+        sev_s = f" [{sev}]" if sev else ""
+        lines.append(f"- {_pz_label(n)}{sev_s}: {ft} (at {ts})")
     return " ".join(lines)
 
 
@@ -723,7 +841,7 @@ def _render_anomalies(records: list, question: str = "") -> str:
     for a in records[:5]:
         n = a.get("pzem_number")
         label = a.get("anomaly_label") or "anomaly"
-        ts = _fmt_ts(a.get("timestamp"))
+        ts = _fmt_ts_s(a.get("timestamp"))
         lines.append(f"- PZEM {n}: {label} (at {ts})" if n is not None else f"- {label} (at {ts})")
     return " ".join(lines)
 
@@ -736,7 +854,7 @@ def _render_peaks(records: list, question: str = "") -> str:
     if tp is None:
         return "No peak data is available right now."
     dom = p.get("dominant_pzems")
-    ts = _fmt_ts(p.get("timestamp"))
+    ts = _fmt_ts_s(p.get("timestamp"))
     dom_s = f" (dominant: PZEM {dom})" if dom else ""
     return f"Latest system peak was {tp} W at {ts}{dom_s}."
 
@@ -757,13 +875,13 @@ def _render_maintenance(records: list, question: str = "") -> str:
     for r in records[:5]:
         n = r.get("pzem_number")
         lvl = r.get("risk_level")
-        lines.append(f"- PZEM {n}: {lvl}")
+        lines.append(f"- {_pz_label(n)}: {lvl}")
     return " ".join(lines)
 
 
 def _render_forecast(records: list, question: str = "") -> str:
     if not records:
-        return "No forecast is available right now."
+        return _NO_FORECAST_DATA
     r = records[0]
     parts = ["A power forecast is available."]
     f24 = r.get("forecast_24h")
@@ -772,18 +890,21 @@ def _render_forecast(records: list, question: str = "") -> str:
         parts.append(f"24h forecast around {f24} W.")
     if isinstance(f7, (int, float)):
         parts.append(f"7d forecast around {f7} W.")
+    if len(parts) == 1:
+        return _NO_FORECAST_DATA
     return " ".join(parts)
 
 
 def _render_bill(records: list, question: str = "") -> str:
     if not records:
-        return "No bill prediction is available right now."
+        return "Available bill prediction data insufficient hai, so no verified bill estimate."
     b = records[0]
     est = b.get("estimated_bill")
     if est is None:
-        return "No bill prediction is available right now."
-    ts = _fmt_ts(b.get("anchor_timestamp"))
-    return f"Latest predicted bill is {est} (as of {ts})."
+        return "Available bill prediction data insufficient hai, so no verified bill estimate."
+    ts = _fmt_ts_s(b.get("anchor_timestamp"))
+    return (f"Based on the current billing period, the predicted bill is {est} "
+            f"(as of {ts}).")
 
 
 def _render_energy_saving(records: list, question: str = "") -> str:
@@ -840,7 +961,7 @@ def _render_historical(result: dict, question: str = "") -> str:
         if power.get("minimum") is not None:
             parts.append(f"Minimum power: {power['minimum']} W")
         if power.get("max_timestamp") is not None:
-            parts.append(f"Peak at: {_fmt_ts(power['max_timestamp'])}")
+            parts.append(f"Peak at: {_fmt_ts_s(power['max_timestamp'])}")
 
     voltage = result.get("voltage")
     if voltage and voltage.get("average") is not None:
@@ -1074,22 +1195,25 @@ def _compose_combined_evidence(question: str, results: dict) -> dict[str, list]:
         for f in faults[:5]:
             n = f.get("pzem_number")
             ft = f.get("fault_type") or "fault"
-            ts = _fmt_ts(f.get("timestamp"))
-            evidence["observed"].append(f"Fault: PZEM {n}: {ft} at {ts}" if n is not None else f"Fault: {ft} at {ts}")
+            ts = _fmt_ts_s(f.get("timestamp"))
+            sev = f.get("severity")
+            sev_s = f" [{sev}]" if sev else ""
+            evidence["observed"].append(
+                f"Fault: {_pz_label(n)}{sev_s}: {ft} at {ts}" if n is not None else f"Fault: {ft} at {ts}")
 
     anomalies = results.get("get_anomalies")
     if isinstance(anomalies, list) and anomalies:
         for a in anomalies[:5]:
             n = a.get("pzem_number")
             label = a.get("anomaly_label") or "anomaly"
-            ts = _fmt_ts(a.get("timestamp"))
+            ts = _fmt_ts_s(a.get("timestamp"))
             evidence["observed"].append(f"Anomaly: PZEM {n}: {label} at {ts}" if n is not None else f"Anomaly: {label} at {ts}")
 
     peaks = results.get("get_peaks")
     if isinstance(peaks, list) and peaks:
         for p in peaks[:3]:
             tp = p.get("total_peak_power_w")
-            ts = _fmt_ts(p.get("timestamp"))
+            ts = _fmt_ts_s(p.get("timestamp"))
             dom = p.get("dominant_pzems")
             dom_s = f" (dominant: PZEM {dom})" if dom else ""
             evidence["observed"].append(f"Peak: {tp} W at {ts}{dom_s}" if tp is not None else f"Peak at {ts}")
@@ -1107,7 +1231,7 @@ def _compose_combined_evidence(question: str, results: dict) -> dict[str, list]:
             for r in maint_data[:5]:
                 n = r.get("pzem_number")
                 lvl = r.get("risk_level")
-                evidence["observed"].append(f"Maintenance risk: PZEM {n}: {lvl}" if n is not None and lvl is not None else f"Maintenance risk: {lvl}")
+                evidence["observed"].append(f"Maintenance risk: {_pz_label(n)}: {lvl}" if n is not None and lvl is not None else f"Maintenance risk: {lvl}")
 
     # ---- PROBABLE: from Stage 4 diagnostic recommendations ----
     diag = results.get("get_diagnostic_recommendations")
@@ -1464,6 +1588,21 @@ def _reason_response(pieces: list[str], evidence: dict[str, list], correlation: 
             action_parts.append(item)
         if action_parts:
             result_pieces.extend(action_parts)
+
+    # ---- Missing context is stated explicitly, never invented or implied ----
+    if correlation is not None and correlation.get("has_faults"):
+        has_diag = bool(correlation.get("has_diagnostic"))
+        has_maint = bool(correlation.get("has_maintenance"))
+        if not has_diag and not has_maint:
+            result_pieces.append(
+                "No matching diagnostic recommendation or maintenance information is "
+                "currently available for these faults.")
+        elif has_diag and not has_maint:
+            result_pieces.append(
+                "Maintenance information is currently unavailable for these faults.")
+        elif has_maint and not has_diag:
+            result_pieces.append(
+                "No matching diagnostic recommendation is currently available for these faults.")
 
     # ---- If pieces is empty, try to build from evidence ----
     if not result_pieces:
@@ -1923,11 +2062,19 @@ def _apply_phase3d(
     return _safe_fallback(evidence, correlation, question)
 
 
+def _no_data_answer(question: str) -> str:
+    """Project-specific 'no data' wording. Future questions must not be answered
+    with generic AI-limitation text."""
+    if _FUTURE_HINTS.search(question.lower()):
+        return _NO_FORECAST_DATA
+    return "I don't have enough current data to answer that."
+
+
 def _compose_energy(question: str, results: dict, correlation: Optional[dict] = None) -> str:
     """Deterministic composer for live energy data."""
     results = {k: v for k, v in results.items() if _has_data(v)}
     if not results:
-        return "I don't have enough current data to answer that."
+        return _no_data_answer(question)
     pieces = []
     for name in _ORDER:
         if name not in results:
@@ -1936,7 +2083,7 @@ def _compose_energy(question: str, results: dict, correlation: Optional[dict] = 
         if rendered:
             pieces.append(rendered)
     if not pieces:
-        return "I don't have enough current data to answer that."
+        return _no_data_answer(question)
     evidence = _compose_combined_evidence(question, results)
     response = _reason_response(pieces, evidence, correlation, question)
     return _apply_phase3d(response, question, results, evidence, correlation)
@@ -1960,6 +2107,9 @@ def _llm_compose_energy(question: str, results: dict, history: list, api_key: st
             "include the PZEM number, value and timestamp as evidence. If a section is empty, "
             "do not mention it. Keep responses concise (under 180 words). "
             "Avoid saying 'according to my database'. "
+            "Never mention training/knowledge cutoffs, real-time access limits, or general "
+            "AI limitations; if forecast or bill data is missing, say the available forecast "
+            "data is insufficient. "
             "If evidence contains a 'status' field set to 'NO_DATA', say historical data is unavailable. "
             "If 'status' is 'INSUFFICIENT_DATA', say there is insufficient historical data. "
             "Do not substitute live readings for historical readings. "
@@ -2035,13 +2185,13 @@ def _llm_compose_energy(question: str, results: dict, history: list, api_key: st
             user_msgs = [msg for msg in messages if msg.get("role") == "user"]
             combined = [sys_msg] + user_msgs if user_msgs else [sys_msg] + messages
             resp = client.chat.completions.create(model=model,max_tokens=500, messages=combined)  # type: ignore
-            answer = resp.choices[0].message.content.strip()
+            answer = _llm_answer_text(resp)
         else:
             import anthropic  # type: ignore
             client = anthropic.Anthropic(api_key=api_key)
             model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5")
             resp = client.messages.create(model=model, max_tokens=500, system=system, messages=messages)
-            answer = resp.content[0].text.strip()
+            answer = _llm_answer_text(resp)
         validated = _apply_phase3d(answer, question, results, evidence, correlation)
         return validated or None
     except Exception as exc:  # noqa: BLE001

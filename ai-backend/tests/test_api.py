@@ -472,7 +472,7 @@ def test_history_system(client, monkeypatch):
 
 # ---- 25. Ask BOB -------------------------------------------------------------
 def test_ask_returns_answer(client, monkeypatch):
-    from ai import bob_tools
+    from ai import ask_bob, bob_tools
     meters = [
         {"pzem_number": 1, "online": True, "power": 276.0, "energy": 1.5, "voltage": 230.1},
         {"pzem_number": 3, "online": True, "power": 114.0, "energy": 0.9, "voltage": 228.0},
@@ -484,6 +484,8 @@ def test_ask_returns_answer(client, monkeypatch):
             return list(meters)
         return []
 
+    # Assert on BOB's deterministic composer, not on a live provider's wording.
+    monkeypatch.setattr(ask_bob, "_llm_compose_energy", lambda *a, **k: None)
     monkeypatch.setattr(bob_tools, "run_tool", fake_run)
     r = client.post("/api/v1/ask", json={"question": "Which PZEM uses most power?"})
     assert r.status_code == 200

@@ -295,9 +295,11 @@ def test_readable_pzem_labels(tmp_path):
     res = rg.generate_monthly_report(data=data, year=CUR_YEAR, month=CUR_MONTH, output_dir=str(tmp_path))
     with open(res["pdf"], "rb") as fh:
         blob = fh.read()
-    assert b"PZEM 1" in blob
-    assert b"PZEM 2" in blob
-    assert b"PZEM 3" in blob
+    # Display is mapping-driven; with no Firebase mapping the canonical,
+    # traceable ID form "PZEM-N" is used for every meter.
+    assert b"PZEM-1" in blob
+    assert b"PZEM-2" in blob
+    assert b"PZEM-3" in blob
 
 def test_power_converted_to_kw(tmp_path):
     data = ReportInput(pzem_count=1, frames={1: _frame(n=288, power=200.0)})

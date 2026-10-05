@@ -2,6 +2,43 @@ firebase.initializeApp(firebaseConfig);
 
 const maxPower = 3000;
 const colors = ["#2578ff", "#7b4cf6", "#f28d2f", "#13b887", "#e45f92", "#16a7d9", "#a269d8", "#d88323", "#2c9e72"];
+const PZEM_LOAD_MAPPING = {
+  pzem_1:{load_name:"PZEM-1",location:"Unassigned"},
+  pzem_2:{load_name:"PZEM-2",location:"Unassigned"},
+  pzem_3:{load_name:"PZEM-3",location:"Unassigned"},
+  pzem_4:{load_name:"PZEM-4",location:"Unassigned"},
+  pzem_5:{load_name:"PZEM-5",location:"Unassigned"},
+  pzem_6:{load_name:"PZEM-6",location:"Unassigned"},
+  pzem_7:{load_name:"PZEM-7",location:"Unassigned"},
+  pzem_8:{load_name:"PZEM-8",location:"Unassigned"},
+  pzem_9:{load_name:"PZEM-9",location:"Unassigned"}
+};
+function getLoadName(pzemKey){
+  const m=PZEM_LOAD_MAPPING[pzemKey];
+  if(m&&m.load_name&&m.load_name.trim()) return m.load_name.trim();
+  if(!pzemKey) return "Unknown";
+  return pzemKey.toUpperCase().replace("_","-");
+}
+
+let PZEM_MAPPING_LOADED={};
+let CURRENT_EDIT_PZEM=null;
+async function loadPzemMapping(){try{if(typeof firebase!=="undefined"&&firebase.database){const snap=await firebase.database().ref("config/pzem_mapping").once("value");PZEM_MAPPING_LOADED=snap.val()||{};return PZEM_MAPPING_LOADED;}return null;}catch(e){console.warn("load",e);return null;}}
+async function savePzemMapping(m){try{if(typeof firebase!=="undefined"&&firebase.database){await firebase.database().ref("config/pzem_mapping").update(m);PZEM_MAPPING_LOADED=Object.assign({},PZEM_MAPPING_LOADED,m);return true;}}catch(e){console.error("save",e);}return false;}
+function getMappedLoadName(k){const m=(PZEM_MAPPING_LOADED&&PZEM_MAPPING_LOADED[k])||(PZEM_LOAD_MAPPING&&PZEM_LOAD_MAPPING[k]);if(m&&m.load_name&&String(m.load_name).trim())return String(m.load_name).trim();if(!k)return "Unknown";return k.toUpperCase().replace("_","-");}
+function getMappedLoadLocation(k){const m=(PZEM_MAPPING_LOADED&&PZEM_MAPPING_LOADED[k])||(PZEM_LOAD_MAPPING&&PZEM_LOAD_MAPPING[k]);if(m&&m.location&&String(m.location).trim())return String(m.location).trim();return "Unassigned";}
+/* PRESENTATION identity for PZEM-specific events (alerts, faults, anomalies,
+   recommendations). Reads the central mapping above — PZEM IDs stay immutable
+   and no second mapping table exists. Unmapped meters degrade to
+   "PZEM-1 / Unassigned". */
+function pzemIdentityParts(k){const key=String(k||"");const num=key.replace(/[^0-9]/g,"");const id=num?"PZEM-"+num:(key.toUpperCase()||"PZEM");const name=getMappedLoadName(key);const location=getMappedLoadLocation(key);return {id:id,name:name,location:location,sub:name===id?location:location+" · "+id};}
+function pzemIdentityText(k){const p=pzemIdentityParts(k);return p.name+" · "+p.sub;}
+function pzemIdentityHtml(k){const p=pzemIdentityParts(k);return escapeHtml(p.name)+'<span class="pzem-identity-sub">'+escapeHtml(p.sub)+'</span>';}
+function getLoadLocation(pzemKey){
+  const m=PZEM_LOAD_MAPPING[pzemKey];
+  if(m&&m.location&&m.location.trim()) return m.location.trim();
+  return "Unassigned";
+}
+
 const $ = (id) => document.getElementById(id);
 
 const dashboard = $("dashboardContent");
@@ -151,7 +188,7 @@ function createDatasets() {
   }));
 }
 
-/* Add common frequency summary card and power range/PZEM selectors */
+/* Add frequency summary card and power range selectors */
 function createMonitoringUi() {
   const summaryCardLayout = document.createElement("style");
 
@@ -799,7 +836,7 @@ function updateFrequency() {
   // Part 5 fix: filter to FRESH meters only. The previous version accepted
   // any meter with frequency > 0 regardless of age, so a PZEM that stopped
   // reporting hours ago (but whose last frequency reading happened to be a
-  // normal ~50 Hz) kept contributing to "Common frequency" forever — the
+  // normal ~50 Hz) kept contributing to "Frequency" forever — the
   // same stale-existence bug as the cards, just for this one widget.
   const freshValues = [];
 
@@ -1121,9 +1158,18 @@ function renderDashboard() {
     const isLive = isMeterFresh(meter);
     const power = isLive ? normalizePowerWatts(meter) : 0;
 
-    card.querySelector(".meter-number").textContent = String(index + 1).padStart(2, "0");
+    const pzemKey = (typeof getPzemKeyFromIndex === "function") ? getPzemKeyFromIndex(index) : ("pzem_" + (index + 1));
+    const mappedName = (typeof getMappedLoadName === "function") ? getMappedLoadName(pzemKey) : ("PZEM " + (index + 1));
+    const mappedLocation = (typeof getMappedLoadLocation === "function") ? getMappedLoadLocation(pzemKey) : "Unassigned";
+    card.querySelector(".meter-number").textContent = mappedName;
     card.querySelector(".meter-name").textContent = `PZEM ${index + 1}`;
     card.querySelector(".meter-id").textContent = id.toUpperCase();
+
+    const editBtn = card.querySelector(".edit-meter");
+    if (editBtn) {
+      editBtn.dataset.pzemKey = pzemKey;
+      editBtn.dataset.pzemNumber = String(index + 1);
+    }
     // A stale/offline meter has NO current measurement. Show "—", never a
     // numeric zero: a real measured 0 W must stay distinguishable from "no
     // reading available". The card still carries the `offline` class, the
@@ -1173,7 +1219,7 @@ function renderDashboard() {
       } else if (hrs > 0) {
         freshnessBadge.textContent = `Last seen: ${hrs} hr${hrs > 1 ? 's' : ''} ago`;
       } else if (mins > 0) {
-        freshnessBadge.textContent = `Last seen: ${mins} min ${ageSec % 60} sec ago`;
+        freshnessBadge.textContent = `Last seen: ${mins} min ago`;
       } else {
         freshnessBadge.textContent = `Last seen: ${ageSec} sec ago`;
       }
@@ -1191,10 +1237,12 @@ card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* en
     
     // STAGE 4: Add emergency-fault class and fault info if an EMERGENCY alert is active
     const alert = meterAlerts[`pzem_${index + 1}`];
+    const who = pzemIdentityHtml(`pzem_${index + 1}`);
     let faultInfoHTML = "";
     if (alert && alert.severity === "EMERGENCY") {
       meterCard.classList.add("emergency-fault");
       faultInfoHTML = `
+        <div class="pzem-identity">${who}</div>
         <div class="fault-badge">${alert.type.replace(/_/g, ' ')}</div>
         <div class="fault-details">
           <span class="fault-severity">[${alert.severity}]</span>
@@ -1206,6 +1254,7 @@ card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* en
     } else if (alert && alert.severity === "WARNING") {
       // WARNING severity: add subtle indicator but no red blink
       faultInfoHTML = `
+        <div class="pzem-identity">${who}</div>
         <div class="fault-badge warning-badge">${alert.type.replace(/_/g, ' ')}</div>
         <div class="fault-details"><span class="fault-severity">[${alert.severity}]</span></div>
       `;
@@ -1218,14 +1267,14 @@ card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* en
       const scoreDisplay = aiState.score !== null ? ` (score: ${Number(aiState.score).toFixed(2)})` : "";
       const aiBadge = severity === "EMERGENCY" ? "ai-alert-emergency" : severity === "WARNING" ? "ai-alert-warning" : "ai-alert-anomaly";
       faultInfoHTML += `<div class="fault-badge ai-alert-${aiBadge.replace("ai-alert-", "")}">AI ANOMALY</div>
-        <div class="fault-details"><span>${aiState.label}${scoreDisplay} [${severity}]</span> ${new Date(aiState.timestamp * 1000).toLocaleTimeString()}</div>`;
+        <div class="fault-details"><div class="pzem-identity">${who}</div><span>${aiState.label}${scoreDisplay} [${severity}]</span> ${new Date(aiState.timestamp * 1000).toLocaleTimeString()}</div>`;
     } else if (aiState && aiState.type === "fault") {
       const severity = aiState.severity || "NORMAL";
       const faultType = aiState.faultType || "unknown";
       const valueDisplay = aiState.measuredValue !== undefined ? ` — ${aiState.measuredValue}` : "";
       const aiBadge = severity === "EMERGENCY" ? "ai-alert-emergency" : severity === "WARNING" ? "ai-alert-warning" : "ai-alert-anomaly";
       faultInfoHTML += `<div class="fault-badge ai-alert-${aiBadge.replace("ai-alert-", "")}">AI FAULT</div>
-        <div class="fault-details"><span>${faultType}${valueDisplay} [${severity}]</span> ${new Date(aiState.timestamp * 1000).toLocaleTimeString()}</div>`;
+        <div class="fault-details"><div class="pzem-identity">${who}</div><span>${faultType}${valueDisplay} [${severity}]</span> ${new Date(aiState.timestamp * 1000).toLocaleTimeString()}</div>`;
     }
     
     // Apply the combined fault-info HTML
@@ -1244,14 +1293,14 @@ card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* en
         const severity = meterAiState.severity || "NORMAL";
         const scoreDisplay = meterAiState.score !== null ? ` (score: ${Number(meterAiState.score).toFixed(2)})` : "";
         aiStatus.className = `ai-status ai-status-anomaly`;
-        aiStatus.innerHTML = `<span class="ai-status-pill">ANOMALY</span><span class="ai-status-details"> ${meterAiState.label}${scoreDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date(meterAiState.timestamp * 1000).toLocaleTimeString()}</span>`;
+        aiStatus.innerHTML = `<span class="ai-status-pill">ANOMALY</span><span class="pzem-identity">${who}</span><span class="ai-status-details"> ${meterAiState.label}${scoreDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date(meterAiState.timestamp * 1000).toLocaleTimeString()}</span>`;
       } else if (aiStatusType === "fault") {
         // Active fault
         const severity = String(meterAiState.severity || "NORMAL");
         const faultType = String(meterAiState.faultType || "unknown");
         const valueDisplay = meterAiState.measuredValue !== undefined ? ` — ${meterAiState.measuredValue}` : "";
         aiStatus.className = `ai-status ai-status-${severity.toLowerCase() === "emergency" ? "emergency" : severity.toLowerCase() === "warning" ? "warning" : "anomaly"}`;
-        aiStatus.innerHTML = `<span class="ai-status-pill">${severity}</span><span class="ai-status-details"> ${faultType}${valueDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date((meterAiState.timestamp || 0) * 1000).toLocaleTimeString()}</span>`;
+        aiStatus.innerHTML = `<span class="ai-status-pill">${severity}</span><span class="pzem-identity">${who}</span><span class="ai-status-details"> ${faultType}${valueDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date((meterAiState.timestamp || 0) * 1000).toLocaleTimeString()}</span>`;
       } else if (aiStatusType === "no_event") {
         // AI ran successfully, no anomaly/fault detected
         const reason = meterAiState.reason || "AI analysis completed; no anomaly or fault detected";
@@ -1343,10 +1392,11 @@ card.querySelector(".meter-card").dataset.meterNumber = String(index + 1); /* en
     display: none;
   `;
   if (criticalAIEvent) {
+    const who = escapeHtml(pzemIdentityText("pzem_" + (criticalPzemNumber || "")));
     aiSummary.style.display = "block";
     aiSummary.innerHTML = criticalAIEvent.type === "anomaly"
-      ? `<b>AI:</b> anomaly on PZEM ${criticalPzemNumber || "?"} [${criticalAIEvent.severity}] ${new Date(criticalAIEvent.timestamp * 1000).toLocaleTimeString()}`
-      : `<b>AI:</b> fault on PZEM ${criticalPzemNumber || "?"} [${criticalAIEvent.severity}] ${new Date(criticalAIEvent.timestamp * 1000).toLocaleTimeString()}`;
+      ? `<b>AI:</b> anomaly on ${who} [${criticalAIEvent.severity}] ${new Date(criticalAIEvent.timestamp * 1000).toLocaleTimeString()}`
+      : `<b>AI:</b> fault on ${who} [${criticalAIEvent.severity}] ${new Date(criticalAIEvent.timestamp * 1000).toLocaleTimeString()}`;
   } else {
     aiSummary.style.display = "none";
     aiSummary.innerHTML = "";
@@ -1837,31 +1887,64 @@ $('exportButton').addEventListener('click', async () => {
   $('exportButton').textContent = 'Preparing export…';
 
   try {
-    const snapshots = await Promise.all(
-      Array.from({ length: 9 }, (_, index) =>
-        firebase.database().ref(`${historyPrefix()}pzem_${index + 1}`).once("value")
-      )
-    );
+    const [snapshots, alertSnapshot] = await Promise.all([
+      Promise.all(
+        Array.from({ length: 9 }, (_, index) =>
+          firebase.database().ref(`${historyPrefix()}pzem_${index + 1}`).once("value")
+        )
+      ),
+      firebase.database().ref("alerts").once("value").catch(() => null)
+    ]);
 
-    const rows = [["Date", "Time", "PZEM ID", "Voltage (V)", "Current (A)", "Power (W)", "Energy (kWh)", "Frequency (Hz)", "Power Factor"]];
+    const rows = [["Date", "Time", "PZEM ID", "Load Name", "Location", "Voltage (V)", "Current (A)", "Power (W)", "Energy (kWh)", "PF", "Frequency (Hz)", "Alert"]];
+
+    // Alerts live at alerts/pzem_N/<unix-ts>. Index them by the 5-minute
+    // history slot they fall into so a row can report a real detected event
+    // for that time; slots with no event stay "—" (never a fabricated
+    // "NORMAL" / "No fault").
+    const alertBySlot = {};
+    const alertTree = alertSnapshot && alertSnapshot.val ? alertSnapshot.val() : {};
+    Object.keys(alertTree || {}).forEach((pzemKey) => {
+      const entries = alertTree[pzemKey];
+      if (!entries || typeof entries !== "object") return;
+      Object.entries(entries).forEach(([ts, alert]) => {
+        if (!alert || typeof alert !== "object") return;
+        const stamp = Number(alert.timestamp) || timestampMilliseconds(ts);
+        if (!Number.isFinite(stamp) || stamp <= 0) return;
+        const slot = Math.floor(stamp / HISTORY_SLOT_MS);
+        const label = [alert.type, alert.severity].filter(Boolean).join(" / ");
+        if (!label) return;
+        const id = `${pzemKey}@${slot}`;
+        alertBySlot[id] = alertBySlot[id] ? `${alertBySlot[id]}; ${label}` : label;
+      });
+    });
 
     snapshots.forEach((snapshot, meterIndex) => {
-      const pzemId = `PZEM ${meterIndex + 1}`;
+      const pzemKey = `pzem_${meterIndex + 1}`;
+      const pzemId = `PZEM-${meterIndex + 1}`;
+      // Resolve display metadata from the single central mapping only.
+      const loadName = getMappedLoadName(pzemKey);
+      const location = getMappedLoadLocation(pzemKey);
       Object.entries(snapshot.val() || {}).forEach(([timestampKey, reading]) => {
         if (!reading || typeof reading !== "object") return; // skip malformed entries, never invent values
         if (classifyReading(reading).status === 'INVALID') return; // exclude corrupt/impossible records from CSV export
 
-        const { date, time } = formatKolkataDateTime(timestampMilliseconds(timestampKey));
+        const stamp = timestampMilliseconds(timestampKey);
+        const { date, time } = formatKolkataDateTime(stamp);
+        const alert = alertBySlot[`${pzemKey}@${Math.floor(stamp / HISTORY_SLOT_MS)}`] || "—";
         rows.push([
           date,
           time,
           pzemId,
+          loadName,
+          location,
           reading.voltage ?? 0,
           reading.current ?? 0,
           reading.power ?? 0,
           reading.energy ?? 0,
+          reading.pf ?? 0,
           reading.frequency ?? 0,
-          reading.pf ?? 0
+          alert
         ]);
       });
     });
@@ -1876,7 +1959,10 @@ $('exportButton').addEventListener('click', async () => {
 
     const link = document.createElement("a");
     link.href = URL.createObjectURL(
-      new Blob([rows.map((row) => row.join(",")).join("\n")], { type: "text/csv" })
+      new Blob([rows.map((row) => row.map((cell) => {
+        const s = String(cell ?? "");
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      }).join(",")).join("\n")], { type: "text/csv" })
     );
     link.download = "pzem-historical-readings.csv";
     link.click();
@@ -2244,7 +2330,7 @@ function latestForecastRecord(meterKey) {
 }
 
 /* ---------------------------------------------------------------------------
-   Stage 11 — Energy Saving suggestions (historical/AI data only, never live).
+   Stage 11 — Energy Recommendations (historical/AI data only, never live).
    Loads the latest record from /ai/energy_saving once, then keeps it live via
    child_added — the same pattern as the Stage 6/9 caches. Rendering only ever
    reads the cached AI record; no recommendation is computed from 10s readings.
@@ -2284,7 +2370,9 @@ function loadEnergySavingCache() {
 }
 
 function renderEnergySavingItem(r) {
-  const meter = r.pzem_number == null ? "SYSTEM" : ("PZEM " + r.pzem_number);
+  // PZEM-specific rows get the mapped identity; system-wide rows keep SYSTEM.
+  const isSystem = r.pzem_number == null;
+  const meter = isSystem ? "SYSTEM" : pzemIdentityHtml("pzem_" + r.pzem_number);
   const sav = [];
   if (r.potential_saving_kwh != null) sav.push("≈ " + Number(r.potential_saving_kwh).toFixed(2) + " kWh");
   if (r.potential_cost_saving != null) sav.push("≈ " + inr(r.potential_cost_saving));
@@ -2293,7 +2381,7 @@ function renderEnergySavingItem(r) {
   return `<div class="es-item es-${escapeHtml(r.priority)}">
     <div class="es-top">
       <span class="es-badge es-badge-${escapeHtml(r.priority)}">${escapeHtml(r.priority)}</span>
-      <span class="es-meter">${escapeHtml(meter)}</span>
+      <span class="es-meter${isSystem ? "" : " pzem-identity"}">${isSystem ? escapeHtml(meter) : meter}</span>
       <span class="es-type">${escapeHtml(r.recommendation_type)}</span>
     </div>
     <p class="es-reason">${escapeHtml(r.reason)}</p>
@@ -2307,7 +2395,7 @@ function renderEnergySaving() {
   if (!list) return;
   if (!energySavingCache || !energySavingCache.recommendations ||
       energySavingCache.recommendations.length === 0) {
-    if (note) note.innerHTML = `<span class="forecast-pill none">No suggestions</span>`;
+    if (note) note.innerHTML = `<span class="forecast-pill none">No recommendations yet</span>`;
      list.innerHTML = `<p class="es-empty">No recommendations yet. Recommendations are generated from historical data and AI analysis.</p>`;
     return;
   }
@@ -2779,8 +2867,11 @@ function refreshOpenModalLiveParts() {
 function openMeterDetail(n) {
   activeMeterNumber = n;
 
-  $("dialogMeterName").textContent = `PZEM ${n}`;
-  $("dialogMeterId").textContent = `PZEM_${n}`;
+  // Identity for everything inside this dialog (alerts, faults, sessions):
+  // mapped load name on top, "Location · PZEM-N" underneath. PZEM ID stays.
+  const who = pzemIdentityParts(`pzem_${n}`);
+  $("dialogMeterName").textContent = who.name;
+  $("dialogMeterId").textContent = who.sub;
 
   switchModalTab("overview");
   renderModalOverview();
@@ -2801,6 +2892,18 @@ function closeMeterDetail() {
 /* Delegated listener: cards are re-rendered on every live update, so a single
    listener on the container (rather than one per card) keeps working forever. */
 dashboard.addEventListener("click", (event) => {
+  const editButton = event.target.closest(".edit-meter");
+  if (editButton) {
+
+    event.preventDefault();
+    event.stopPropagation();
+    const pzemKey = editButton.dataset.pzemKey;
+    const pzemNumber = editButton.dataset.pzemNumber;
+    if (pzemKey && pzemNumber) {
+      openMappingEditModal(pzemKey, Number(pzemNumber));
+    }
+    return;
+  }
   const card = event.target.closest(".meter-card");
   if (card && card.dataset.meterNumber) openMeterDetail(Number(card.dataset.meterNumber));
 });
@@ -2909,6 +3012,7 @@ function refreshFreshnessOnly() {
     
     // STAGE 4: Maintain emergency-fault class based on alert cache
     const alert = meterAlerts[`pzem_${index + 1}`];
+    const who = pzemIdentityHtml(`pzem_${index + 1}`);
     if (alert && alert.severity === "EMERGENCY") {
       card.classList.add("emergency-fault");
       card.classList.remove("offline");
@@ -2916,6 +3020,7 @@ function refreshFreshnessOnly() {
       const faultInfo = card.querySelector(".fault-info");
       if (faultInfo) {
         faultInfo.innerHTML = `
+          <div class="pzem-identity">${who}</div>
           <div class="fault-badge">${alert.type.replace(/_/g, ' ')}</div>
           <div class="fault-details">
             <span class="fault-severity">[${alert.severity}]</span>
@@ -2929,6 +3034,7 @@ function refreshFreshnessOnly() {
       const faultInfo = card.querySelector(".fault-info");
       if (faultInfo) {
         faultInfo.innerHTML = `
+          <div class="pzem-identity">${who}</div>
           <div class="fault-badge warning-badge">${alert.type.replace(/_/g, ' ')}</div>
           <div class="fault-details"><span class="fault-severity">[${alert.severity}]</span></div>
         `;
@@ -2947,13 +3053,13 @@ function refreshFreshnessOnly() {
           const severity = meterAiState.severity || "NORMAL";
           const scoreDisplay = meterAiState.score !== null ? ` (score: ${Number(meterAiState.score).toFixed(2)})` : "";
           aiStatus.className = `ai-status ai-status-anomaly`;
-          aiStatus.innerHTML = `<span class="ai-status-pill">ANOMALY</span><span class="ai-status-details"> ${meterAiState.label}${scoreDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date(meterAiState.timestamp * 1000).toLocaleTimeString()}</span>`;
+          aiStatus.innerHTML = `<span class="ai-status-pill">ANOMALY</span><span class="pzem-identity">${who}</span><span class="ai-status-details"> ${meterAiState.label}${scoreDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date(meterAiState.timestamp * 1000).toLocaleTimeString()}</span>`;
         } else if (aiStatusType === "fault") {
           const severity = String(meterAiState.severity || "NORMAL");
           const faultType = String(meterAiState.faultType || "unknown");
           const valueDisplay = meterAiState.measuredValue !== undefined ? ` — ${meterAiState.measuredValue}` : "";
           aiStatus.className = `ai-status ai-status-${severity.toLowerCase() === "emergency" ? "emergency" : severity.toLowerCase() === "warning" ? "warning" : "anomaly"}`;
-          aiStatus.innerHTML = `<span class="ai-status-pill">${severity}</span><span class="ai-status-details"> ${faultType}${valueDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date((meterAiState.timestamp || 0) * 1000).toLocaleTimeString()}</span>`;
+          aiStatus.innerHTML = `<span class="ai-status-pill">${severity}</span><span class="pzem-identity">${who}</span><span class="ai-status-details"> ${faultType}${valueDisplay} [${severity}]</span><span class="ai-status-details"> ${new Date((meterAiState.timestamp || 0) * 1000).toLocaleTimeString()}</span>`;
         } else if (aiStatusType === "no_event") {
           const reason = meterAiState.reason || "AI analysis completed; no anomaly or fault detected";
           aiStatus.className = "ai-status ai-status-normal";
@@ -3005,3 +3111,82 @@ setInterval(() => {
   updateLivePower();
   trackPzemRuntimeState();
 }, 5000);
+
+function openMappingEditModal(pzemKey, pzemNumber) {
+  const modal = document.getElementById('editLoadModal');
+  const pzemDisplay = document.getElementById('pzemIdDisplay');
+  const nameInput = document.getElementById('loadNameInput');
+  const locationInput = document.getElementById('locationInput');
+  if (!modal || !pzemDisplay || !nameInput || !locationInput) {
+    console.warn('Mapping edit modal elements missing');
+    return;
+  }
+  const key = String(pzemKey || '');
+  const num = pzemNumber != null ? String(pzemNumber) : key.replace(/[^0-9]/g, '') || '';
+  pzemDisplay.value = num ? ('PZEM-' + num) : (key ? key.toUpperCase() : '');
+  pzemDisplay.readOnly = true;
+  const m = (PZEM_MAPPING_LOADED && PZEM_MAPPING_LOADED[key]) || (typeof PZEM_LOAD_MAPPING !== 'undefined' && PZEM_LOAD_MAPPING[key]) || {};
+  nameInput.value = (m.load_name && String(m.load_name).trim()) || (key ? key.toUpperCase().replace('_', '-') : '');
+  locationInput.value = (m.location && String(m.location).trim()) || 'Unassigned';
+
+  modal.setAttribute('aria-hidden', 'false');
+  modal.hidden = false;
+  if (modal.removeAttribute) modal.removeAttribute('hidden');
+  modal.classList.add('active');
+  modal.style.display = 'flex';
+}
+
+function closeMappingEditModal() {
+  const modal = document.getElementById('editLoadModal');
+  if (!modal) return;
+  modal.classList.remove('active');
+  modal.setAttribute('aria-hidden', 'true');
+  modal.hidden = true;
+  modal.style.display = 'none';
+}
+
+async function saveMappingFromModal() {
+  const modal = document.getElementById('editLoadModal');
+  const pzemDisplay = document.getElementById('pzemIdDisplay');
+  const nameInput = document.getElementById('loadNameInput');
+  const locationInput = document.getElementById('locationInput');
+  if (!modal || !pzemDisplay || !nameInput || !locationInput) return false;
+  const disp = String(pzemDisplay.value || '');
+  let pzemKey = '';
+  const m = disp.match(/PZEM[-_ ]?(\d+)/i);
+  if (m) pzemKey = 'pzem_' + m[1];
+  if (!pzemKey) pzemKey = disp.replace('PZEM-', 'pzem_').toLowerCase().replace(/[^a-z0-9_]/g, '');
+  if (!pzemKey || !pzemKey.startsWith('pzem_')) return false;
+  const loadName = String(nameInput.value || '').trim();
+  const location = String(locationInput.value || '').trim();
+  if (!loadName) {
+    alert('Load Name cannot be empty');
+    return false;
+  }
+  const payload = {};
+  payload[pzemKey] = { load_name: loadName, location: location || 'Unassigned' };
+  const ok = await savePzemMapping(payload);
+  if (!ok) {
+    alert('Failed to save load mapping to Firebase');
+    return false;
+  }
+  closeMappingEditModal();
+  renderDashboard();
+  return true;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const saveBtn = document.getElementById('editLoadSave');
+  const cancelBtn = document.getElementById('editLoadCancel');
+  const closeBtn = document.querySelector('.modal-close');
+  const modal = document.getElementById('editLoadModal');
+  if (saveBtn) saveBtn.addEventListener('click', saveMappingFromModal);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeMappingEditModal);
+  if (closeBtn) closeBtn.addEventListener('click', closeMappingEditModal);
+  if (modal) {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeMappingEditModal();
+    });
+  }
+});
+

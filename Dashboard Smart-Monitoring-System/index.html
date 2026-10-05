@@ -138,7 +138,7 @@
         <section class="bill-ai energy-saving" aria-labelledby="energySavingTitle">
           <div class="bill-ai-head">
             <div>
-              <p class="eyebrow">AI ENERGY SAVING</p>
+              <p class="eyebrow">AI ENERGY RECOMMENDATIONS</p>
               <h2 id="energySavingTitle">Energy Recommendations</h2>
             </div>
             <span class="chart-note" id="energySavingNote">Loading…</span>
@@ -218,7 +218,7 @@
             <span class="chart-note">Latest 100 updates</span>
           </div>
           <div class="chart-wrap">
-            <canvas id="frequencyChart" aria-label="Live common frequency graph"></canvas>
+            <canvas id="frequencyChart" aria-label="Live frequency graph"></canvas>
           </div>
         </section>
       </div>
@@ -233,13 +233,13 @@
     </section>
 
     <section class="meter-grid" id="dashboardContent" aria-live="polite"></section>
-  </main>
+  </main><div id="editLoadModal" class="modal" aria-hidden="true" hidden><div class="modal-content"><button class="modal-close" type="button" aria-label="Close edit load mapping">×</button><div class="mapping-modal-header"><h2 class="mapping-modal-title">Edit Load Mapping</h2><p class="mapping-modal-subtitle">Configure the display name and location for this meter.</p></div><div class="mapping-form"><div class="mapping-field"><label class="mapping-label" for="pzemIdDisplay">PZEM ID</label><div class="mapping-input-wrapper"><input id="pzemIdDisplay" class="mapping-input" readonly><span class="mapping-lock" aria-hidden="true">🔒</span></div></div><div class="mapping-field"><label class="mapping-label" for="loadNameInput">Load Name</label><input id="loadNameInput" class="mapping-input" type="text" placeholder="e.g. Fan 1"></div><div class="mapping-field"><label class="mapping-label" for="locationInput">Location</label><input id="locationInput" class="mapping-input" type="text" placeholder="e.g. Classroom"></div></div><div class="mapping-actions"><button id="editLoadCancel" class="mapping-btn mapping-btn-secondary" type="button">Cancel</button><button id="editLoadSave" class="mapping-btn mapping-btn-primary" type="button">Save</button></div></div></div>
 
   <template id="meterTemplate">
     <article class="meter-card">
       <div class="meter-card-header">
         <div class="meter-title-wrap">
-          <span class="meter-number"></span>
+          <span class="meter-number"></span><span class="meter-title"></span> <button class="icon-button edit-meter" type="button" aria-label="Edit load">✏</button>
           <div>
             <h3 class="meter-name"></h3>
             <p class="meter-id"></p>

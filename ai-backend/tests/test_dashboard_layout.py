@@ -62,7 +62,7 @@ def test_feature_names_intact():
     for name in (
         "FORECAST",
         "AI BILL PREDICTION",
-        "AI ENERGY SAVING",
+        "AI ENERGY RECOMMENDATIONS",
         "AUTOMATED REPORTS",
         "ASK BOB",
     ):

@@ -330,6 +330,7 @@ body.dark .forecast-pill.low { color: #fbbf24; }
 .es-badge.es-badge-MEDIUM { background: #ca8a04; }
 .es-badge.es-badge-LOW { background: #16a34a; }
 .es-meter { font: 700 11px "DM Sans", sans-serif; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.es-meter .pzem-identity { color: var(--ink); }
 .es-type { font: 600 11px "DM Sans", sans-serif; color: var(--ink); margin-left: auto; opacity: .8; }
 .es-reason { margin: 6px 0 4px; font: 500 13px/1.4 "DM Sans", sans-serif; color: var(--ink); }
 .es-evidence { font: 500 11px/1.4 "DM Sans", sans-serif; color: var(--muted); }
@@ -382,6 +383,27 @@ body.dark .es-badge.es-badge-LOW { background: #4ade80; color: #06210a; }
 }
 
 .fault-info { margin-top: 8px; }
+/* Presentation identity shown on every PZEM-specific alert / fault / anomaly /
+   recommendation row: "Fan 1" with "Classroom · PZEM-1" underneath. */
+.pzem-identity {
+  display: inline-block;
+  margin-bottom: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.pzem-identity-sub {
+  display: block;
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .fault-badge {
   display: inline-block;
   padding: 3px 6px;
@@ -502,6 +524,239 @@ body.dark .meter-card.offline .meter-number { background: rgba(139, 155, 176, 0.
 .reading-grid dt { margin-bottom: 3px; color: var(--muted); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
 .reading-grid dd { margin: 0; color: var(--ink); font-size: 13px; font-weight: 700; font-family: "Space Grotesk", sans-serif; }
 .meter-card.offline .reading-grid dd { color: var(--muted-light); }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .65);
+  z-index: 1000;
+  border: none;
+  padding: 0;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.modal.active {
+  display: flex;
+}
+
+.modal[hidden] {
+  display: none !important;
+}
+
+.modal-content {
+  position: relative;
+  width: min(480px, calc(100vw - 32px));
+  max-height: min(90vh, 560px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 28px 28px 20px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow:
+    inset 0 1px 0 var(--edge-hi-soft),
+    0 10px 40px rgba(4, 15, 31, .28),
+    0 40px 80px rgba(4, 15, 31, .4);
+}
+
+.modal-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .08);
+  border-radius: 4px;
+}
+
+.modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s ease;
+}
+
+.modal-close:hover {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.modal-close:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.mapping-modal-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 24px;
+  padding-right: 40px;
+}
+
+.mapping-modal-title {
+  margin: 0;
+  font: 600 clamp(18px, 2.2vw, 22px) / 1.15 "Space Grotesk", sans-serif;
+  letter-spacing: -.02em;
+  color: var(--ink);
+}
+
+.mapping-modal-subtitle {
+  margin: 0;
+  font: 500 13px / 1.5 "DM Sans", sans-serif;
+  color: var(--muted);
+}
+
+.mapping-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mapping-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mapping-label {
+  font: 600 11px / 1 "DM Sans", sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mapping-input {
+  width: 100%;
+  height: 46px;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(232, 239, 248, .04);
+  color: var(--ink);
+  font: 500 14px / 1.4 "DM Sans", sans-serif;
+  transition: border .15s ease, background .15s ease, box-shadow .15s ease;
+}
+
+.mapping-input::placeholder {
+  color: var(--muted);
+}
+
+.mapping-input:hover {
+  border-color: rgba(255, 255, 255, .16);
+}
+
+.mapping-input:focus-visible {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--blue-soft);
+}
+
+.mapping-input[readonly] {
+  background: rgba(232, 239, 248, .08);
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.mapping-input-wrapper {
+  position: relative;
+}
+
+.mapping-lock {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+  opacity: .9;
+}
+
+.mapping-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.mapping-btn {
+  height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  font: 600 13px / 1 "DM Sans", sans-serif;
+  letter-spacing: .01em;
+  cursor: pointer;
+  transition: all .15s ease;
+  border: 1px solid transparent;
+}
+
+.mapping-btn-secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.mapping-btn-secondary:hover {
+  background: var(--surface-soft);
+}
+
+.mapping-btn-primary {
+  background: var(--blue);
+  color: #fff;
+}
+
+.mapping-btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.mapping-btn-primary:active {
+  filter: brightness(.98);
+}
+
+.mapping-btn-secondary:focus-visible,
+.mapping-btn-primary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .modal-content {
+    width: calc(100vw - 24px);
+    padding: 24px 20px 16px;
+    border-radius: 16px;
+  }
+
+  .mapping-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .mapping-btn {
+    width: 100%;
+  }
+}
 
 .meter-dialog {
   width: min(760px, calc(100% - 32px));
@@ -921,7 +1176,7 @@ body.dark .pzem-current-session {
 
 /* =========================================================================
    SUBTLE 3D GRAPH DEPTH — visual-only enhancement for the existing Chart.js
-   graphs (Real-Time Power, Common Frequency, modal overview + history).
+   graphs (Real-Time Power, Frequency, modal overview + history).
    Works together with the graphDepth inline plugin in script.js, which
    draws the perspective floor/back-wall INSIDE each canvas. This CSS adds
    only a glass sheen overlay on the chart wells. No layout, sizing, data
