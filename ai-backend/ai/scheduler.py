@@ -426,7 +426,7 @@ class Scheduler:
             logger.info("[monthly_report] generating for %s", key)
             self._run_with_retry(
                 "monthly_report",
-                lambda: self.monthly_runner(self._settings(), now, target[0], target[1]))
+                lambda: self.monthly_runner(self._settings(), target[0], target[1]))
             job.last_monthly_report = key
             job.status = JOB_COMPLETED
             job.last_error = None

@@ -272,7 +272,7 @@ def test_monthly_report_trigger(tmp_path):
     cfg = SchedulerConfig(state_file=str(tmp_path / "s.json"), monthly_report_hour=2)
     state = StateStore(str(tmp_path / "s.json"))
     calls = {"n": 0, "args": None}
-    def runner(s, now, y, m):
+    def runner(s, y, m):
         calls["n"] += 1
         calls["args"] = (y, m)
     now = _now(2026, 9, 1, 3)
@@ -292,7 +292,7 @@ def test_monthly_report_no_duplicate(tmp_path):
     cfg = SchedulerConfig(state_file=str(tmp_path / "s.json"), monthly_report_hour=2)
     state = StateStore(str(tmp_path / "s.json"))
     calls = {"n": 0}
-    runner = lambda s, now, y, m: calls.update(n=calls["n"] + 1)
+    runner = lambda s, y, m: calls.update(n=calls["n"] + 1)
     now = _now(2026, 9, 1, 3)
     sched = Scheduler(config=cfg, state_store=state, monthly_runner=runner,
                       ai_runner=lambda s, now: None, clock=lambda: now)
@@ -309,7 +309,7 @@ def test_incomplete_current_month_skipped(tmp_path):
     cfg = SchedulerConfig(state_file=str(tmp_path / "s.json"))
     state = StateStore(str(tmp_path / "s.json"))
     calls = {"n": 0}
-    runner = lambda s, now, y, m: calls.update(n=calls["n"] + 1)
+    runner = lambda s, y, m: calls.update(n=calls["n"] + 1)
     now = _now(2026, 8, 15, 3)
     sched = Scheduler(config=cfg, state_store=state, monthly_runner=runner,
                       ai_runner=lambda s, now: None, clock=lambda: now)
@@ -321,7 +321,7 @@ def test_current_month_allowed_when_configured(tmp_path):
     cfg = SchedulerConfig(state_file=str(tmp_path / "s.json"), monthly_report_allow_current=True)
     state = StateStore(str(tmp_path / "s.json"))
     calls = {"n": 0, "args": None}
-    def runner(s, now, y, m):
+    def runner(s, y, m):
         calls["n"] += 1
         calls["args"] = (y, m)
     now = _now(2026, 8, 15, 3)
@@ -333,7 +333,98 @@ def test_current_month_allowed_when_configured(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 18. deterministic monthly filename / target mapping
+# 19. _tick_monthly -> run_monthly_report_job call contract (regression)
+# ---------------------------------------------------------------------------
+
+def test_tick_monthly_matches_run_monthly_report_job_signature(tmp_path, monkeypatch):
+    """The real (default) monthly_runner must accept exactly what _tick_monthly
+    passes, and receive the intended (year, month).
+
+    Every other monthly test injects a fake runner, so the genuine
+    run_monthly_report_job signature was never bound to the caller: passing a
+    4th positional `now` raised
+    "run_monthly_report_job() takes from 1 to 3 positional arguments but 4
+    were given", which _run_with_retry surfaced as a JOB_FAILED monthly_report.
+    """
+    import inspect
+    from ai import scheduler as sched_mod
+    from ai import report_generator as rg
+
+    # Guard the contract directly: the caller must only pass parameters the
+    # real job declares. Fails if a bogus `now` positional is reintroduced.
+    sig = inspect.signature(sched_mod.run_monthly_report_job)
+    assert "now" not in sig.parameters, (
+        "run_monthly_report_job must not require a `now` argument"
+    )
+    assert list(sig.parameters) == ["settings", "year", "month"]
+
+    captured = {}
+
+    def fake_build(settings):
+        return demo_input(1)
+
+    def fake_generate(data=None, year=None, month=None, output_dir=None, rate=0.0):
+        captured["year"] = year
+        captured["month"] = month
+        return {"report": None, "pdf": "x.pdf", "stub": "x"}
+
+    monkeypatch.setattr(rg, "build_report_input_from_pipelines", fake_build)
+    monkeypatch.setattr(rg, "generate_monthly_report", fake_generate)
+
+    cfg = SchedulerConfig(state_file=str(tmp_path / "s.json"), monthly_report_hour=2,
+                          retry_count=0, retry_delay_seconds=0)
+    state = StateStore(str(tmp_path / "s.json"))
+    now = _now(2026, 9, 1, 3)  # completed month -> target 2026-08
+    # No monthly_runner injected: the REAL run_monthly_report_job is used.
+    sched = Scheduler(config=cfg, state_store=state,
+                      ai_runner=lambda s, now: None, clock=lambda: now)
+    sched.tick(now)
+
+    job = state.job("monthly_report")
+    assert job.status != JOB_FAILED, f"monthly job failed: {job.last_error}"
+    assert job.last_error is None
+    # The intended period reached the report generator.
+    assert captured["year"] == 2026
+    assert captured["month"] == 8
+    assert job.last_monthly_report == "2026-08"
+
+
+def test_tick_monthly_current_month_contract(tmp_path, monkeypatch):
+    """Same contract on the allow-current path (the forced verification run):
+    target must be the current month, with no `now` argument passed."""
+    import inspect
+    from ai import scheduler as sched_mod
+    from ai import report_generator as rg
+
+    sig = inspect.signature(sched_mod.run_monthly_report_job)
+    bind_ok = sig.bind(object(), 2026, 10)
+    assert list(bind_ok.arguments) == ["settings", "year", "month"]
+
+    captured = {}
+    monkeypatch.setattr(rg, "build_report_input_from_pipelines", lambda s: demo_input(1))
+    monkeypatch.setattr(
+        rg, "generate_monthly_report",
+        lambda data=None, year=None, month=None, output_dir=None, rate=0.0:
+            captured.update(year=year, month=month) or {"report": None, "pdf": "p", "stub": "s"},
+    )
+
+    cfg = SchedulerConfig(state_file=str(tmp_path / "s.json"),
+                          monthly_report_allow_current=True,
+                          retry_count=0, retry_delay_seconds=0)
+    state = StateStore(str(tmp_path / "s.json"))
+    now = _now(2026, 10, 6, 3)  # mid-month, forced -> target 2026-10
+    sched = Scheduler(config=cfg, state_store=state,
+                      ai_runner=lambda s, now: None, clock=lambda: now)
+    sched.tick(now)
+
+    job = state.job("monthly_report")
+    assert job.status != JOB_FAILED, f"monthly job failed: {job.last_error}"
+    assert captured == {"year": 2026, "month": 10}
+    assert job.last_monthly_report == "2026-10"
+
+
+# ---------------------------------------------------------------------------
+# 20. deterministic monthly filename / target mapping
 # ---------------------------------------------------------------------------
 
 def test_monthly_target_mapping():
