@@ -65,5 +65,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ai-recommendations-reports
-          path: ai-backend/reports
+          path: Dashboard Smart-Monitoring-System/reports/monthly
           if-no-files-found: ignore
