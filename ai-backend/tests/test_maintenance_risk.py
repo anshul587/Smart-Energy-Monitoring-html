@@ -33,6 +33,7 @@ from ai.maintenance_risk import (
     risk_payload,
     run_stage_8_pipeline,
     write_risk_result,
+    write_system_summary,
 )
 from ai.preprocessing import PreprocessResult
 from ai.config import get_settings
@@ -110,7 +111,7 @@ class FakeRef:
 @pytest.fixture
 def fake_db(monkeypatch) -> dict:
     store: dict = {}
-    mr._db_ref = lambda path: FakeRef(store, path)
+    monkeypatch.setattr(mr, "_db_ref", lambda path: FakeRef(store, path))
     return store
 
 
@@ -625,3 +626,203 @@ def test_stage17_regression(tmp_path: Path, fake_db: dict):
     from ai import maintenance_risk  # noqa: F401
     assert hasattr(maintenance_risk, "assess_maintenance_risk")
     assert hasattr(maintenance_risk, "run_stage_8_pipeline")
+
+
+# ===========================================================================
+# 23. Firebase duplicate-app regression (production defect)
+# ===========================================================================
+
+class _FakeFirebaseAdmin:
+    """firebase_admin stand-in with the REAL duplicate-app semantics:
+    initialize_app() raises ValueError once a DEFAULT app already exists."""
+
+    def __init__(self):
+        self.apps: dict = {}
+        self.init_calls: list = []
+        self.get_calls: list = []
+
+    def initialize_app(self, cred, options=None, name=None):
+        self.init_calls.append((cred, options, name))
+        key = name or "[DEFAULT]"
+        if key in self.apps:
+            raise ValueError(
+                "The default Firebase app already exists. This means you "
+                "called initialize_app() more than once without providing an "
+                "app name as the second argument."
+            )
+        self.apps[key] = "app:" + key
+        return self.apps[key]
+
+    def get_app(self, name=None):
+        self.get_calls.append(name)
+        key = name or "[DEFAULT]"
+        if key not in self.apps:
+            raise ValueError(
+                "The default Firebase app does not exist. Make sure to "
+                "call initialize_app() first."
+            )
+        return self.apps[key]
+
+
+class _FakeDbModule:
+    """firebase_admin.db stand-in wired to an in-memory store."""
+
+    def __init__(self, store: dict):
+        self._store = store
+        self.paths: list = []
+
+    def reference(self, path: str) -> FakeRef:
+        self.paths.append(path)
+        return FakeRef(self._store, path)
+
+
+def _firebase_settings(cred_file: Path) -> Settings:
+    return get_settings().__class__(
+        firebase_service_account_path=str(cred_file),
+        firebase_database_url="https://example-default-rtdb.firebaseio.com",
+        pzem_count=1,
+        history_retention_days=60,
+        cache_dir=cred_file.parent,
+        peak_power_threshold_w=0.0,
+        anthropic_api_key="",
+    )
+
+
+@pytest.fixture
+def fake_admin(monkeypatch, tmp_path: Path):
+    """Patch firebase_admin + settings so _init_firebase() runs end to end
+    with no real credentials and no network."""
+    import firebase_admin
+    import firebase_admin.credentials as credentials_mod
+
+    admin = _FakeFirebaseAdmin()
+    cred_file = tmp_path / "svc.json"
+    cred_file.write_text("{}")
+
+    monkeypatch.setattr(firebase_admin, "initialize_app", admin.initialize_app)
+    monkeypatch.setattr(firebase_admin, "get_app", admin.get_app)
+    monkeypatch.setattr(credentials_mod, "Certificate", lambda p: f"cert:{p}")
+    monkeypatch.setattr(mr, "get_settings", lambda: _firebase_settings(cred_file))
+    admin.cred_file = cred_file
+    monkeypatch.setattr(mr, "_firebase_app", None)
+    return admin
+
+
+def test_init_first_call_uses_initialize_app(fake_admin):
+    """1. First initialization calls initialize_app() with cred + databaseURL."""
+    app = mr._init_firebase()
+
+    assert app == "app:[DEFAULT]"
+    assert mr._firebase_app == "app:[DEFAULT]"
+    assert len(fake_admin.init_calls) == 1
+    cred, options, name = fake_admin.init_calls[0]
+    assert name is None, "must initialise the DEFAULT app, never a named one"
+    assert cred == f"cert:{fake_admin.cred_file}"
+    assert options == {"databaseURL": "https://example-default-rtdb.firebaseio.com"}
+    assert fake_admin.get_calls == [], "no reuse needed on the very first init"
+
+
+def test_init_second_call_reuses_get_app(fake_admin):
+    """2. Second initialization reuses the existing default app via get_app()."""
+    mr._init_firebase()
+    mr._firebase_app = None  # simulate another module having created the app
+
+    app = mr._init_firebase()
+
+    assert app == "app:[DEFAULT]"
+    assert mr._firebase_app == "app:[DEFAULT]"
+    assert len(fake_admin.init_calls) == 2  # 2nd raised ValueError internally
+    assert fake_admin.get_calls == [None], "must reuse the DEFAULT app"
+
+
+def test_init_does_not_leak_duplicate_app_error(fake_admin):
+    """3. No duplicate-app exception escapes, however cold the module cache is."""
+    for _ in range(3):
+        mr._firebase_app = None
+        mr._init_firebase()  # must not raise
+
+    assert list(fake_admin.apps) == ["[DEFAULT]"], "no named duplicate apps"
+
+
+def test_init_preserves_config_and_credentials(fake_admin):
+    """Config/credentials behaviour is unchanged by the reuse path."""
+    settings_before = _firebase_settings(fake_admin.cred_file)
+    mr._init_firebase()
+    cred, options, name = fake_admin.init_calls[0]
+
+    assert name is None
+    assert options == {"databaseURL": settings_before.firebase_database_url}
+    assert cred == f"cert:{settings_before.firebase_service_account_path}"
+
+
+def test_maintenance_writes_succeed_when_app_already_initialized(fake_admin,
+                                                                  monkeypatch,
+                                                                  tmp_path: Path):
+    """4. The exact production failure: an earlier stage already created the
+    default app, so EVERY pzem_N + system write must still succeed."""
+    import firebase_admin
+    import firebase_admin.db  # ensure the lazy submodule attribute exists
+
+    # Stage 5 / Stage 7 already created the default app in this scheduler process.
+    firebase_admin.initialize_app("pre-existing-cert", {"databaseURL": "https://other"})
+
+    store: dict = {}
+    fake_db_module = _FakeDbModule(store)
+    monkeypatch.setattr(firebase_admin, "db", fake_db_module)
+
+    # Use the REAL _db_ref so _init_firebase() actually runs inside the writes.
+    settings = _settings(tmp_path)
+    results, summary = mr.run_maintenance_risk_pipeline(
+        settings=settings,
+        preprocess_results={1: _pre(1, _frame([120.0] * 72))},
+    )
+
+    per_pzem = {n: 1 if write_risk_result(r) else 0 for n, r in sorted(results.items())}
+
+    assert per_pzem == {1: 1}, "maintenance write must not fail on a duplicate app"
+    assert write_system_summary(summary) is True
+
+    # Persistence paths unchanged.
+    assert fake_db_module.paths == ["ai/maintenance/pzem_1", "ai/maintenance/system"]
+    key = str(results[1].window_end_ts)
+    assert store[f"ai/maintenance/pzem_1/{key}"] == risk_payload(results[1])
+    assert store[f"ai/maintenance/system/{summary.timestamp}"] is not None
+
+    # The pre-existing app was reused; no second app was ever created.
+    assert list(fake_admin.apps) == ["[DEFAULT]"]
+    assert fake_admin.get_calls == [None]
+
+
+def test_stage_8_pipeline_writes_all_meters_after_other_stage_inits(fake_admin,
+                                                                    monkeypatch,
+                                                                    tmp_path: Path):
+    """5. End-to-end Stage 8 run right after Stage 5/7: all 3 meters + system
+    persist, no duplicate-app failure, existing risk logic unchanged."""
+    import firebase_admin
+    import firebase_admin.db  # ensure the lazy submodule attribute exists
+
+    firebase_admin.initialize_app("stage5-cert", {"databaseURL": "https://other"})
+
+    store: dict = {}
+    monkeypatch.setattr(firebase_admin, "db", _FakeDbModule(store))
+
+    settings = _settings(tmp_path, pzem_count=3)
+    pre_results = {
+        i + 1: _pre(i + 1, _frame([100.0 + i * 10] * 36,
+                                   start_ts=START_TS + i * 1000))
+        for i in range(3)
+    }
+    out = mr.run_stage_8_pipeline(settings=settings, preprocess_results=pre_results)
+
+    assert out["per_pzem"] == {1: 1, 2: 1, 3: 1}
+    assert out["system"] == 1
+    assert out["system_result"].meters_analyzed == 3
+
+    pzem_paths = [p for p in store if p.startswith("ai/maintenance/pzem_")]
+    assert sorted({p.rsplit("/", 1)[0] for p in pzem_paths}) == [
+        "ai/maintenance/pzem_1",
+        "ai/maintenance/pzem_2",
+        "ai/maintenance/pzem_3",
+    ]
+    assert any(p.startswith("ai/maintenance/system/") for p in store)
+    assert list(fake_admin.apps) == ["[DEFAULT]"]
