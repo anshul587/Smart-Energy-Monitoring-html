@@ -23,7 +23,26 @@ function getLoadName(pzemKey){
 let PZEM_MAPPING_LOADED={};
 let CURRENT_EDIT_PZEM=null;
 async function loadPzemMapping(){try{if(typeof firebase!=="undefined"&&firebase.database){const snap=await firebase.database().ref("config/pzem_mapping").once("value");PZEM_MAPPING_LOADED=snap.val()||{};return PZEM_MAPPING_LOADED;}return null;}catch(e){console.warn("load",e);return null;}}
-async function savePzemMapping(m){try{if(typeof firebase!=="undefined"&&firebase.database){await firebase.database().ref("config/pzem_mapping").update(m);PZEM_MAPPING_LOADED=Object.assign({},PZEM_MAPPING_LOADED,m);return true;}}catch(e){console.error("save",e);}return false;}
+async function savePzemMapping(m){
+  if (typeof firebase==="undefined"||!firebase.database) return {ok:false,code:"firebase-missing",message:"Firebase is not available."};
+  if (typeof firebase.auth==="function"&&!firebase.auth().currentUser) return {ok:false,code:"auth-not-ready",message:"Dashboard sign-in has not finished yet."};
+  try {
+    await firebase.database().ref("config/pzem_mapping").update(m);
+    PZEM_MAPPING_LOADED=Object.assign({},PZEM_MAPPING_LOADED,m);
+    return {ok:true};
+  } catch (e) {
+    console.error("save",e);
+    return {ok:false,code:(e&&e.code)||"error",message:(e&&e.message)||String(e)};
+  }
+}
+function mappingSaveFailureReason(result){
+  switch (result&&result.code) {
+    case "PERMISSION_DENIED": return "Firebase security rules rejected the write to config/pzem_mapping (permission_denied). Add a rule letting authenticated users write config/pzem_mapping, then retry.";
+    case "auth-not-ready": return "Dashboard sign-in has not finished yet. Wait a moment and retry.";
+    case "firebase-missing": return "Firebase is not loaded - check the script tags and firebase-config.js.";
+    default: return String((result&&result.message)||"unknown error").replace(/^Error:\s*/i,"");
+  }
+}
 function getMappedLoadName(k){const m=(PZEM_MAPPING_LOADED&&PZEM_MAPPING_LOADED[k])||(PZEM_LOAD_MAPPING&&PZEM_LOAD_MAPPING[k]);if(m&&m.load_name&&String(m.load_name).trim())return String(m.load_name).trim();if(!k)return "Unknown";return k.toUpperCase().replace("_","-");}
 function getMappedLoadLocation(k){const m=(PZEM_MAPPING_LOADED&&PZEM_MAPPING_LOADED[k])||(PZEM_LOAD_MAPPING&&PZEM_LOAD_MAPPING[k]);if(m&&m.location&&String(m.location).trim())return String(m.location).trim();return "Unassigned";}
 /* PRESENTATION identity for PZEM-specific events (alerts, faults, anomalies,
@@ -1161,9 +1180,11 @@ function renderDashboard() {
     const pzemKey = (typeof getPzemKeyFromIndex === "function") ? getPzemKeyFromIndex(index) : ("pzem_" + (index + 1));
     const mappedName = (typeof getMappedLoadName === "function") ? getMappedLoadName(pzemKey) : ("PZEM " + (index + 1));
     const mappedLocation = (typeof getMappedLoadLocation === "function") ? getMappedLoadLocation(pzemKey) : "Unassigned";
-    card.querySelector(".meter-number").textContent = mappedName;
-    card.querySelector(".meter-name").textContent = `PZEM ${index + 1}`;
-    card.querySelector(".meter-id").textContent = id.toUpperCase();
+    card.querySelector(".meter-number").textContent = String(index + 1);
+    card.querySelector(".meter-name").textContent = mappedName;
+    const meterLocationEl = card.querySelector(".meter-location");
+    if (meterLocationEl) meterLocationEl.textContent = mappedLocation;
+    card.querySelector(".meter-id").textContent = pzemIdentityParts(pzemKey).id;
 
     const editBtn = card.querySelector(".edit-meter");
     if (editBtn) {
@@ -1813,6 +1834,11 @@ let billRefreshTimer = null;
 
 firebase.auth().onAuthStateChanged((user) => {
   if (user) {
+    /* Load the persisted load mapping (config/pzem_mapping) only after auth
+       succeeds — RTDB reads are denied until then. Earlier maps were only
+       kept in-page after a save, so a reload always reverted to the static
+       defaults. Re-render once loaded so cards pick up the stored names. */
+    loadPzemMapping().then(() => { if (typeof renderDashboard === "function") renderDashboard(); });
     loadAIStatus();
     attachLiveListener();
     attachFaultAlertListener();
@@ -2017,6 +2043,7 @@ let forecastHorizon = "24h";          // "24h" | "7d"
 let selectedForecastPzem = "system";  // "system" | "pzem_N"
 const forecastCache = {};            // leaf ("pzem_N" | "system") -> latest record
 let energySavingCache = null;        // latest /ai/energy_saving record (or null)
+let energySavingRecs = [];           // display-order recs backing #energySavingList
 const FORECAST_DEMO = new URLSearchParams(location.search).has("forecastDemo");
 
 // initForecastPanel() is now called inside onAuthStateChanged callback
@@ -2369,7 +2396,7 @@ function loadEnergySavingCache() {
   }
 }
 
-function renderEnergySavingItem(r) {
+function renderEnergySavingItem(r, idx) {
   // PZEM-specific rows get the mapped identity; system-wide rows keep SYSTEM.
   const isSystem = r.pzem_number == null;
   const meter = isSystem ? "SYSTEM" : pzemIdentityHtml("pzem_" + r.pzem_number);
@@ -2378,11 +2405,12 @@ function renderEnergySavingItem(r) {
   if (r.potential_cost_saving != null) sav.push("≈ " + inr(r.potential_cost_saving));
   const savText = sav.length ? ` <span class="es-sav">Est. saving ${sav.join(" · ")} (estimate)</span>` : "";
   const win = r.evidence_window ? ` · window ${escapeHtml(r.evidence_window)}` : "";
-  return `<div class="es-item es-${escapeHtml(r.priority)}">
+  return `<div class="es-item es-${escapeHtml(r.priority)}" data-idx="${Number.isInteger(idx) ? idx : ""}" role="button" tabindex="0" aria-label="${escapeHtml(String(r.recommendation_type || "recommendation").replace(/_/g, " "))} details">
     <div class="es-top">
       <span class="es-badge es-badge-${escapeHtml(r.priority)}">${escapeHtml(r.priority)}</span>
       <span class="es-meter${isSystem ? "" : " pzem-identity"}">${isSystem ? escapeHtml(meter) : meter}</span>
       <span class="es-type">${escapeHtml(r.recommendation_type)}</span>
+      <span class="es-more">Details</span>
     </div>
     <p class="es-reason">${escapeHtml(r.reason)}</p>
     <p class="es-evidence">${escapeHtml(r.recommendation)}${savText}${win}</p>
@@ -2395,17 +2423,173 @@ function renderEnergySaving() {
   if (!list) return;
   if (!energySavingCache || !energySavingCache.recommendations ||
       energySavingCache.recommendations.length === 0) {
+    energySavingRecs = [];
     if (note) note.innerHTML = `<span class="forecast-pill none">No recommendations yet</span>`;
      list.innerHTML = `<p class="es-empty">No recommendations yet. Recommendations are generated from historical data and AI analysis.</p>`;
     return;
   }
   const recs = energySavingCache.recommendations.slice()
     .sort((a, b) => _esPriorityRank(b.priority) - _esPriorityRank(a.priority));
+  energySavingRecs = recs;
   if (note) {
     const pill = energySavingCache.status === "NO_RECOMMENDATION" ? "none" : "high";
     note.innerHTML = `<span class="forecast-pill ${pill}">${recs.length} suggestion(s)</span>`;
   }
   list.innerHTML = recs.map(renderEnergySavingItem).join("");
+}
+
+/* ---- Recommendation details modal (presentation only; never writes) ----
+   Each section maps to ONE stored payload field; null fields show
+   "Not available". No causes, savings or explanations are invented here. */
+const ES_TYPE_LABELS = {
+  SHIFT_NON_CRITICAL_LOAD: "Shift non-critical load",
+  REDUCE_IDLE_CONSUMPTION: "Reduce idle consumption",
+  IMPROVE_POWER_FACTOR: "Improve power factor",
+  REDUCE_HIGH_POWER: "Investigate high power",
+  INVESTIGATE_HIGH_CURRENT: "Investigate high current",
+  RESPOND_PREDICTABLE_HIGH_LOAD: "Respond to predictable high load",
+  REDUCE_PEAK_LOAD: "Reduce peak load",
+};
+const ES_EVIDENCE_LABELS = {
+  window: { label: "Recurring time-of-day window" },
+  peak_median_w: { label: "Median power in window", unit: "W" },
+  typical_median_w: { label: "Typical power (baseline)", unit: "W" },
+  forecast_peak_median_w: { label: "Forecast peak median power", unit: "W" },
+  forecast_typical_median_w: { label: "Forecast typical power", unit: "W" },
+  confidence: { label: "Forecast confidence" },
+  max_power_w: { label: "Maximum power", unit: "W" },
+  median_power_w: { label: "Median power", unit: "W" },
+  high_power_fraction: { label: "High-power share of samples", pct: true },
+  max_current_a: { label: "Maximum current", unit: "A" },
+  median_current_a: { label: "Median current", unit: "A" },
+  high_current_fraction: { label: "High-current share of samples", pct: true },
+  idle_baseline_w: { label: "Idle / standby baseline", unit: "W" },
+  mean_power_w: { label: "Mean power", unit: "W" },
+  low_power_fraction: { label: "Time near idle", pct: true },
+  median_pf: { label: "Median power factor" },
+  threshold: { label: "Power-factor threshold" },
+  peak_power_w: { label: "Peak power", unit: "W" },
+  baseline_power_w: { label: "Baseline power", unit: "W" },
+  peak_above_baseline_w: { label: "Peak above baseline", unit: "W" },
+};
+
+function _esMetricValue(value, meta) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return escapeHtml(String(value));
+  let out;
+  if (meta && meta.pct) out = (n * 100).toFixed(1) + "%";
+  else out = Number.isInteger(n) ? String(n) : n.toFixed(2);
+  return (meta && meta.unit) ? out + " " + meta.unit : out;
+}
+
+function _esEvidenceRows(rec) {
+  const ev = rec.evidence && typeof rec.evidence === "object" ? rec.evidence : {};
+  const rows = Object.keys(ev)
+    .filter((k) => ev[k] != null && ev[k] !== "")
+    .map((k) => {
+      const meta = ES_EVIDENCE_LABELS[k] || {};
+      const label = meta.label || k.replace(/_/g, " ");
+      return `<div class="rec-metric"><span class="rec-metric-label">${escapeHtml(label)}</span><span class="rec-metric-value">${_esMetricValue(ev[k], meta)}</span></div>`;
+    });
+  return rows.length ? `<div class="rec-metrics">${rows.join("")}</div>` : "";
+}
+
+function _esSourceLabel(s) {
+  return String(s || "").replace(/^stage(\d+)/i, "Stage $1").replace(/\//g, " · ").replace(/_/g, " ");
+}
+
+function formatRecTimestamp(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "unknown time";
+  return new Date(n > 1e12 ? n : n * 1000).toLocaleString();
+}
+
+function renderRecommendationDetail(rec) {
+  if (!rec) return "";
+  const na = '<span class="rec-na">Not available</span>';
+  const isSystem = rec.pzem_number == null;
+  let scope;
+  if (isSystem) {
+    scope = '<div class="rec-scope"><span class="rec-scope-pill rec-scope-pill-system">SYSTEM</span>' +
+      '<span class="rec-scope-line">Whole-site · all meters</span></div>';
+  } else {
+    const who = pzemIdentityParts("pzem_" + rec.pzem_number);
+    scope = '<div class="rec-scope">' +
+      '<span class="rec-scope-pill rec-scope-pill-pzem">' + escapeHtml(who.id) + '</span>' +
+      '<div class="rec-scope-lines">' +
+      '<span class="rec-scope-line"><span class="rec-scope-k">Load</span> ' + escapeHtml(who.name) + '</span>' +
+      '<span class="rec-scope-line"><span class="rec-scope-k">Location</span> ' + escapeHtml(who.location) + '</span>' +
+      '</div></div>';
+  }
+  const typeLabel = ES_TYPE_LABELS[rec.recommendation_type] || String(rec.recommendation_type || "").replace(/_/g, " ");
+  // WHAT HAPPENED names the detected pattern (recommendation_type), always
+  // clearly labeled as the type. WHY THIS RECOMMENDATION carries the real
+  // stored explanation (reason) — promoted here per the audit rule that a
+  // bare classification code must never be presented as the explanation.
+  const happened = typeLabel ? '<p><span class="rec-k">Type:</span> ' + escapeHtml(typeLabel) + '</p>' : na;
+  const why = rec.reason ? '<p>' + escapeHtml(rec.reason) + '</p>' : na;
+  const evidence = _esEvidenceRows(rec) || na;
+  const doWhat = rec.recommendation ? '<p>' + escapeHtml(rec.recommendation) + '</p>' : na;
+  const impact = [];
+  if (rec.potential_saving_kwh != null) {
+    impact.push('<div class="rec-metric"><span class="rec-metric-label">Estimated energy saving</span>' +
+      '<span class="rec-metric-value">≈ ' + Number(rec.potential_saving_kwh).toFixed(2) + ' kWh <span class="rec-est">(estimate)</span></span></div>');
+  }
+  if (rec.potential_cost_saving != null) {
+    impact.push('<div class="rec-metric"><span class="rec-metric-label">Estimated cost saving</span>' +
+      '<span class="rec-metric-value">≈ ' + inr(rec.potential_cost_saving) + ' <span class="rec-est">(estimate)</span></span></div>');
+  }
+  if (rec.estimated_percent_reduction != null) {
+    impact.push('<div class="rec-metric"><span class="rec-metric-label">Estimated reduction</span>' +
+      '<span class="rec-metric-value">≈ ' + Number(rec.estimated_percent_reduction).toFixed(2) + '% <span class="rec-est">(estimate)</span></span></div>');
+  }
+  const impactHtml = impact.length ? '<div class="rec-metrics">' + impact.join("") + '</div>' : na;
+  const win = rec.evidence_window ? '<p>' + escapeHtml(rec.evidence_window) + '</p>' : na;
+  const sources = (rec.source_stages && rec.source_stages.length)
+    ? '<ul class="rec-sources">' + rec.source_stages.map((s) => '<li>' + escapeHtml(_esSourceLabel(s)) + '</li>').join("") + '</ul>'
+    : na;
+  return scope +
+    '<div class="rec-section"><h3>What happened</h3>' + happened + '</div>' +
+    '<div class="rec-section"><h3>Why this recommendation</h3>' + why + '</div>' +
+    '<div class="rec-section"><h3>Evidence</h3>' + evidence + '</div>' +
+    '<div class="rec-section"><h3>What should I do?</h3>' + doWhat + '</div>' +
+    '<div class="rec-section"><h3>Potential impact</h3>' + impactHtml + '</div>' +
+    '<div class="rec-section"><h3>Evidence window</h3>' + win + '</div>' +
+    '<div class="rec-section"><h3>Source</h3>' + sources + '</div>';
+}
+
+function openRecommendationDetail(rec) {
+  const modal = document.getElementById('recommendationModal');
+  const body = document.getElementById('recDetailBody');
+  const sub = document.getElementById('recDetailSubtitle');
+  if (!modal || !body) return;
+  if (sub) sub.textContent = 'Generated ' + formatRecTimestamp(rec.timestamp);
+  body.innerHTML = renderRecommendationDetail(rec);
+  modal.setAttribute('aria-hidden', 'false');
+  modal.hidden = false;
+  if (modal.removeAttribute) modal.removeAttribute('hidden');
+  modal.classList.add('active');
+  modal.style.display = 'flex';
+  const closeBtn = modal.querySelector('.modal-close');
+  if (closeBtn) closeBtn.focus();
+}
+
+function closeRecommendationDetail() {
+  const modal = document.getElementById('recommendationModal');
+  if (!modal) return;
+  modal.classList.remove('active');
+  modal.setAttribute('aria-hidden', 'true');
+  modal.hidden = true;
+  modal.style.display = 'none';
+}
+
+function activateEnergySavingItem(target) {
+  const item = target && target.closest ? target.closest('.es-item') : null;
+  if (!item) return;
+  const idx = item.getAttribute('data-idx');
+  if (idx === null || idx === "") return;
+  const rec = energySavingRecs[Number(idx)];
+  if (rec) openRecommendationDetail(rec);
 }
 
 /* Fetches real 5-minute history for the chart's ACTUAL line (never live 10s
@@ -3165,9 +3349,9 @@ async function saveMappingFromModal() {
   }
   const payload = {};
   payload[pzemKey] = { load_name: loadName, location: location || 'Unassigned' };
-  const ok = await savePzemMapping(payload);
-  if (!ok) {
-    alert('Failed to save load mapping to Firebase');
+  const result = await savePzemMapping(payload);
+  if (!result || !result.ok) {
+    alert('Failed to save load mapping to Firebase.\n' + mappingSaveFailureReason(result));
     return false;
   }
   closeMappingEditModal();
@@ -3188,5 +3372,31 @@ document.addEventListener('DOMContentLoaded', () => {
       if (e.target === modal) closeMappingEditModal();
     });
   }
+
+  const esList = document.getElementById('energySavingList');
+  if (esList) {
+    esList.addEventListener('click', (e) => activateEnergySavingItem(e.target));
+    esList.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        activateEnergySavingItem(e.target);
+        e.preventDefault();
+      }
+    });
+  }
+  const recModal = document.getElementById('recommendationModal');
+  if (recModal) {
+    const recCloseBtn = recModal.querySelector('.modal-close');
+    const recDetailClose = document.getElementById('recDetailClose');
+    if (recCloseBtn) recCloseBtn.addEventListener('click', closeRecommendationDetail);
+    if (recDetailClose) recDetailClose.addEventListener('click', closeRecommendationDetail);
+    recModal.addEventListener('click', (e) => {
+      if (e.target === recModal) closeRecommendationDetail();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const m = document.getElementById('recommendationModal');
+    if (m && !m.hidden && m.classList.contains('active')) closeRecommendationDetail();
+  });
 });
 
